@@ -1,18 +1,16 @@
 # coding: utf-8
+# flake8: noqa
 """
 Common test support for all AbiPy test scripts.
 
 This single module should provide all the common functionality for abipy tests
 in a single location, so that test scripts can just import it and work right away.
 """
-from __future__ import print_function, division, unicode_literals, absolute_import
-
 import os
 import numpy
 import subprocess
 import json
 import tempfile
-import shutil
 import unittest
 import numpy.testing.utils as nptu
 import abipy.data as abidata
@@ -56,7 +54,9 @@ def has_abinit(version=None, op=">=", manager=None):
     else:
         return cmp_version(build.version, version, op=op)
 
+
 _HAS_MATPLOTLIB_CALLS = 0
+
 
 def has_matplotlib(version=None, op=">="):
     """
@@ -237,9 +237,10 @@ def input_equality_check(ref_file, input2, rtol=1e-05, atol=1e-08, equal_nan=Fal
 
 
 def get_gsinput_si(usepaw=0, as_task=False):
-    # Build GS input file.
-    pseudos = abidata.pseudos("14si.pspnc") if usepaw == 0 else data.pseudos("Si.GGA_PBE-JTH-paw.xml")
-    #silicon = abilab.Structure.zincblende(5.431, ["Si", "Si"], units="ang")
+    """
+    Build and return a GS input file for silicon or a Task if `as_task`
+    """
+    pseudos = abidata.pseudos("14si.pspnc") if usepaw == 0 else abidata.pseudos("Si.GGA_PBE-JTH-paw.xml")
     silicon = abidata.cif_file("si.cif")
 
     from abipy.abio.inputs import AbinitInput
@@ -247,7 +248,6 @@ def get_gsinput_si(usepaw=0, as_task=False):
     ecut = 6
     scf_input.set_vars(
         ecut=ecut,
-        pawecutdg=40,
         nband=6,
         paral_kgb=0,
         iomode=3,
@@ -258,6 +258,35 @@ def get_gsinput_si(usepaw=0, as_task=False):
 
     # K-point sampling (shifted)
     scf_input.set_autokmesh(nksmall=4)
+
+    if not as_task:
+        return scf_input
+    else:
+        from abipy.flowtk.tasks import ScfTask
+        return ScfTask(scf_input)
+
+
+def get_gsinput_alas_ngkpt(ngkpt, usepaw=0, as_task=False):
+    """
+    Build and return a GS input file for AlAs or a Task if `as_task`
+    """
+    if usepaw != 0: raise NotImplementedError("PAW")
+    pseudos = abidata.pseudos("13al.981214.fhi", "33as.pspnc")
+    structure = abidata.structure_from_ucell("AlAs")
+
+    from abipy.abio.inputs import AbinitInput
+    scf_input = AbinitInput(structure, pseudos=pseudos)
+
+    scf_input.set_vars(
+        nband=5,
+        ecut=8.0,
+        ngkpt=ngkpt,
+        nshiftk=1,
+        shiftk=[0, 0, 0],
+        tolvrs=1.0e-6,
+        diemac=12.0,
+    )
+
     if not as_task:
         return scf_input
     else:
@@ -563,6 +592,11 @@ class AbipyTest(PymatgenTest):
     @wraps(get_gsinput_si)
     def get_gsinput_si(*args, **kwargs):
         return get_gsinput_si(*args, **kwargs)
+
+    @staticmethod
+    @wraps(get_gsinput_alas_ngkpt)
+    def get_gsinput_alas_ngkpt(*args, **kwargs):
+        return get_gsinput_alas_ngkpt(*args, **kwargs)
 
 
 def notebook_run(path):

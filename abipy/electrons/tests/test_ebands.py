@@ -1,6 +1,4 @@
 """Tests for electrons.ebands module"""
-from __future__ import print_function, division, unicode_literals, absolute_import
-
 import sys
 import numpy as np
 import unittest
@@ -386,6 +384,14 @@ class ElectronBandsTest(AbipyTest):
         e2 = si_ebands_kpath.lomo_sk(spin=0, kpoint=si_ebands_kpath.kpoints[0])
         assert e1.eig == e2.eig
 
+        # Find k0_list and effmass_bands_f90 (Fortran notation)
+        k0_list, effmass_bands_f90 = si_ebands_kpath.get_kpoints_and_band_range_for_edges()
+
+        self.assert_equal(effmass_bands_f90, [[4, 4], [5, 5]])
+        self.assert_almost_equal(k0_list, np.array(
+                                [[0., 0.        , 0.        ],
+                                 [0., 0.42857143, 0.42857143]]))
+
         # Test abipy-->pymatgen converter
         pmg_bands_kpath = si_ebands_kpath.to_pymatgen()
         assert hasattr(pmg_bands_kpath, "get_branch")  # Should be BandStructureSymmLine
@@ -464,7 +470,7 @@ class ElectronBandsTest(AbipyTest):
 
         self.assert_almost_equal(np.array(values), 1.0)
 
-        em = ebands.effmass_line(spin=0, kpoint=(0, 0, 0), band=0)
+        em = ebands.get_effmass_line(spin=0, kpoint=(0, 0, 0), band=0)
         repr(em); str(em)
         #self.assert_almost_equal(np.array(values), 1.0)
 
@@ -560,6 +566,7 @@ class ElectronBandsPlotterTest(AbipyTest):
                 plotter.combiboxplot(title="Silicon band structure", swarm=True, show=False)
             assert plotter.gridplot(title="Silicon band structure", with_gaps=True, show=False)
             assert plotter.boxplot(title="Silicon band structure", swarm=True, show=False)
+            assert plotter.plot_band_edges(epad_ev=2.0, show=False)
             assert plotter.animate(show=False)
 
         if self.has_ipywidgets():

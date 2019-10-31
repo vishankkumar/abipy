@@ -53,9 +53,12 @@ Links to talks
 This section collects links to some of the talks given by the AbiPy developers.
 
 
-* `Automating ABINIT calculations with AbiPy. Boston MA, 3 March 2019 <https://github.com/gmatteo/abipy_slides_aps_boston_2019>`_ (Introduction to AbiPy for newcomers).
+* `Automating ABINIT calculations with AbiPy. Boston MA, 3 March 2019 <https://gmatteo.github.io/abipy_slides_aps_boston_2019/>`_ (Introduction to AbiPy for newcomers).
 
-* `New features of AbiPy v0.7. Louvain-la-Neuve, Belgium, 20 May 2019 <https://gmatteo.github.io/abipy_intro_abidev2019/>`_ (How to use the AbiPy command line interface in the terminal."
+* `New features of AbiPy v0.7. Louvain-la-Neuve, Belgium, 20 May 2019 <https://gmatteo.github.io/abipy_intro_abidev2019/>`_ (How to use the AbiPy command line interface in the terminal)
+
+* `Automatize a DFT code: high-throughput workflows for Abinit 
+  <https://object.cscs.ch/v1/AUTH_b1d80408b3d340db9f03d373bbde5c1e/learn-public/materials/2019_05_aiida_tutorial/day4_abipy_Petretto.pdf>`_
 
 
 Getting AbiPy
@@ -93,10 +96,9 @@ and activate it with::
 
 You should see the name of the conda environment in the shell prompt.
 
-Now add ``conda-forge``, ``matsci`` and ``abinit`` to your conda channels with::
+Now add ``conda-forge``, and ``abinit`` to your conda channels with::
 
     conda config --add channels conda-forge
-    conda config --add channels matsci
     conda config --add channels abinit
 
 These are the channels from which we will download pymatgen, abipy and abinit.
@@ -130,10 +132,9 @@ based on python3.6 with::
     conda create -n abienv python=3.6
     source activate abienv
 
-Add ``conda-forge``, ``matsci`` and ``abinit`` to your channels with::
+Add ``conda-forge``, and ``abinit`` to your channels with::
 
     conda config --add channels conda-forge
-    conda config --add channels matsci
     conda config --add channels abinit
 
 and install the AbiPy dependencies with::
@@ -470,7 +471,7 @@ Let's start by creating a conda environment with::
     source activate glibc_env
     conda config --add channels conda-forge
 
-Use pip to install spglib (the version from the ``matsci`` channel will trigger the same GLIBC error)::
+Use pip to install spglib::
 
     pip install spglib
 
@@ -481,7 +482,7 @@ Download the pymatgen repository from github with::
     git clone https://github.com/materialsproject/pymatgen.git
     cd pymatgen
 
-If git is not installed, use ``conda install git`` 
+If git is not installed, use ``conda install git``
 
 Now use conda to install the pymatgen requirements listed in ``requirements.txt``
 but before that make sure that ``gcc`` is in ``$PATH``.

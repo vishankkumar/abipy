@@ -1,6 +1,4 @@
 """Tests for input  module"""
-from __future__ import print_function, division, unicode_literals
-
 import os
 import numpy as np
 import abipy.data as abidata
@@ -58,15 +56,15 @@ class TestAbinitInput(AbipyTest):
         assert "foo" not in inp
         inp.set_spell_check(True)
 
-        inp["ecut" ] = 1
+        inp["ecut"] = 1
         assert inp.get("ecut") == 1 and len(inp) == 1 and "ecut" in inp.keys() and "foo" not in inp
 
         # Default is kptopt 1
         assert inp.uses_ktimereversal
 
-        assert inp.mnemonics == False
+        assert not inp.mnemonics
         inp.set_mnemonics(True)
-        assert inp.mnemonics == True
+        assert inp.mnemonics
 
         # Test to_string
         assert inp.to_string(sortmode="a", with_structure=True, with_pseudos=True)
@@ -188,7 +186,7 @@ class TestAbinitInput(AbipyTest):
         assert ngkpt.tolist() == [1, 4, 8]
         assert len(shiftk) == 1 and shiftk.ravel().tolist() == [0.5, 0.0, 0.0]
 
-        inp.set_vars(kptrlatt = [1, 2, 0, 0, 4, 0, 0, 0, 8], nshiftk=1, shiftk=shiftk)
+        inp.set_vars(kptrlatt=[1, 2, 0, 0, 4, 0, 0, 0, 8], nshiftk=1, shiftk=shiftk)
         ngkpt, shiftk = inp.get_ngkpt_shiftk()
         assert ngkpt is None
 
@@ -223,7 +221,7 @@ class TestAbinitInput(AbipyTest):
         prod_inps = inp.product("ngkpt", "tsmear", [[2, 2, 2], [4, 4, 4]], [0.1, 0.2, 0.3])
         assert len(prod_inps) == 6
         assert prod_inps[0]["ngkpt"] == [2, 2, 2] and prod_inps[0]["tsmear"] == 0.1
-        assert prod_inps[-1]["ngkpt"] ==  [4, 4, 4] and prod_inps[-1]["tsmear"] == 0.3
+        assert prod_inps[-1]["ngkpt"] == [4, 4, 4] and prod_inps[-1]["tsmear"] == 0.3
 
         inp["kptopt"] = 4
         assert not inp.uses_ktimereversal
@@ -325,7 +323,7 @@ class TestAbinitInput(AbipyTest):
         assert pert.idir == 1 and (pert.idir, pert.ipert) == (1, 1) and all(c == 0 for c in pert.qpt)
 
         irred_perts = inp_gan.abiget_irred_phperts(qpt=(0.5, 0, 0))
-        print(irred_perts)
+        #print(irred_perts)
         assert len(irred_perts) == 6
         irred_perts_values = [{'idir': 1, 'ipert': 1, 'qpt': [0.5, 0.0, 0.0]},
                               {'idir': 2, 'ipert': 1, 'qpt': [0.5, 0.0, 0.0]},
@@ -372,13 +370,42 @@ class TestAbinitInput(AbipyTest):
             tolvrs=1.0e-10,
         )
 
-        # qpt is not in gs_inp and not passed to method.
-        with self.assertRaises(ValueError):
-            gs_inp.abiget_irred_phperts()
+        # Test make_nscf_kptopt0_input
+        nscf_inp = gs_inp.make_nscf_kptopt0_input(kpts=[1,2,3,4,5,6])
+        assert "ngkpt" not in nscf_inp and "shiftk" not in nscf_inp
+        assert nscf_inp["kptopt"] == 0 and nscf_inp["nkpt"] == 2 and nscf_inp["iscf"] == -2
+
+        ########################
+        # Test make_bands_input
+        ########################
+        nscf_inp = gs_inp.make_bands_input(ndivsm=3, tolwfr=1e-5)
+        assert "ngkpt" not in nscf_inp and "shiftk" not in nscf_inp
+        assert nscf_inp["iscf"] == -2 and nscf_inp["tolwfr"] == 1e-5
+        assert nscf_inp["nband"] == gs_inp["nband"] + 10
+
+        ########################
+        # Test make_bands_input
+        ########################
+        multi =  gs_inp.make_dfpt_effmass_input(kpts=[0, 0, 0, 0.5, 0, 0], effmass_bands_f90=[1, 4, 5, 5])
+        assert len(multi) == 3
+        assert all(inp["kptopt"] == 0 for inp in multi)
+        assert all(inp["nkpt"] == 2 for inp in multi)
+
+        inp0, inp1, inp2 = multi
+        assert inp0["iscf"] == -2
+        assert inp1["rfelfd"] == 2 and inp1["efmas"] == 1 and inp1["efmas_calc_dirs"] == 1 and inp1["efmas_n_dirs"] == 7
+        assert inp2["eph_frohlichm"] == 1 and inp2["eph_task"] == 6 and inp2["asr"] == 2 and inp2["chneut"] == 1
+
+        # Validate with Abinit
+        self.abivalidate_multi(multi)
 
         ################
         # Phonon methods
         ################
+        # qpt is not in gs_inp and not passed to method.
+        with self.assertRaises(ValueError):
+            gs_inp.abiget_irred_phperts()
+
         with self.assertRaises(gs_inp.Error):
             try:
                 ddk_inputs = gs_inp.make_ddk_inputs(tolerance={"tolfoo": 1e10})
@@ -473,7 +500,7 @@ class TestAbinitInput(AbipyTest):
         # Non-linear methods
         ####################
         if self.has_abinit(version='8.3.2'):
-            dte_inputs = gs_inp.make_dte_inputs(phonon_pert=True, skip_permutations=True)
+            dte_inputs = gs_inp.make_dte_inputs(phonon_pert=True, skip_permutations=True, ixc=3)
             print("dte inputs\n", dte_inputs)
             assert len(dte_inputs) == 8
             assert np.all(dte_inputs[0]["d3e_pert2_dir"] == [1, 0, 0])
@@ -513,7 +540,7 @@ class TestMultiDataset(AbipyTest):
 
         multi.addnew_from(0)
         assert multi.ndtset == 2 and multi[0] is not multi[1]
-        assert multi[0].structure ==  multi[1].structure
+        assert multi[0].structure == multi[1].structure
         assert multi[0].structure is not multi[1].structure
 
         multi.set_vars(ecut=2)
@@ -645,9 +672,9 @@ class AnaddbInputTest(AbipyTest):
         assert "qpath" in inp_loto
         assert inp_loto["nph2l"] == 3
         self.assert_almost_equal(inp_loto["qph2l"],
-            [[ 0.        , 0.184959  , 0.       , 0.],
-             [ 0.13871925, 0.13871925, 0.       , 0.],
-             [ 0.0924795 , 0.0924795 , 0.0924795, 0.]])
+            [[0.        , 0.184959  , 0.       , 0.],
+             [0.13871925, 0.13871925, 0.       , 0.],
+             [0.0924795 , 0.0924795 , 0.0924795, 0.]])
         self.abivalidate_input(inp_loto)
 
     def test_modes(self):
@@ -715,8 +742,8 @@ class AnaddbInputTest(AbipyTest):
         self.abivalidate_input(anaddb_input)
 
         anaddb_input = AnaddbInput.dfpt(self.structure, dte=True)
-        assert anaddb_input['nlflag'] == 1
-        assert anaddb_input['alphon'] == 1
+        assert anaddb_input['nlflag'] == 3
+        assert anaddb_input['alphon'] == 0
 
 
 class TestCut3DInput(AbipyTest):

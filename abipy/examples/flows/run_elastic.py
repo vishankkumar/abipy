@@ -17,8 +17,6 @@ in the `the official tutorial <https://docs.abinit.org/tutorial/elastic/>`_
 The DDB file with all the perturbations will be produced automatically at the end of the run
 and saved in ``flow_elastic/w0/outdata/out_DDB``.
 """
-from __future__ import division, print_function, unicode_literals, absolute_import
-
 import sys
 import os
 import numpy as np
@@ -26,6 +24,7 @@ import abipy.abilab as abilab
 import abipy.data as abidata
 
 from abipy import flowtk
+
 
 def make_scf_input(paral_kgb=0):
     """
@@ -38,12 +37,12 @@ def make_scf_input(paral_kgb=0):
     # so that Abinit will recognize the correct spacegroup
     # (Hexagonal and rhombohedral lattices are a bit problematic).
     structure = abilab.Structure.from_abivars(
-	acell=[7.5389648144E+00, 7.5389648144E+00, 1.2277795374E+01],
+        acell=[7.5389648144E+00, 7.5389648144E+00, 1.2277795374E+01],
         natom=4,
         ntypat=2,
-        rprim=[ np.sqrt(0.75), 0.5, 0.0 ,
+        rprim=[np.sqrt(0.75), 0.5, 0.0,
                -np.sqrt(0.75), 0.5, 0.0,
-                          0.0, 0.0, 1.0],
+               0.0, 0.0, 1.0],
         typat=[1, 1, 2, 2],
         xred=[1/3, 2/3, 0,
               2/3, 1/3, 1/2,
@@ -61,8 +60,8 @@ def make_scf_input(paral_kgb=0):
         nband=8,
         ecut=6.0,
         ecutsm=0.5,        # Important when performing structural optimization
-	                   # with variable cell. All DFPT calculations should use
-			   # the same value to be consistent.
+                           # with variable cell. All DFPT calculations should use
+                           # the same value to be consistent.
         ngkpt=[4, 4, 4],
         nshiftk=1,
         shiftk=[0.0, 0.0, 0.5],   # This choice preserves the hexagonal symmetry of the grid.
@@ -79,15 +78,16 @@ def build_flow(options):
     """
     Create a `Flow` for phonon calculations. The flow has one work with:
 
-	- 1 GS Task
-	- 3 DDK Task
-	- 4 Phonon Tasks (Gamma point)
-	- 6 Elastic tasks (3 uniaxial + 3 shear strain)
+        - 1 GS Task
+        - 3 DDK Task
+        - 4 Phonon Tasks (Gamma point)
+        - 6 Elastic tasks (3 uniaxial + 3 shear strain)
 
     The Phonon tasks and the elastic task will read the DDK produced at the beginning
     """
     # Working directory (default is the name of the script with '.py' removed and "run_" replaced by "flow_")
     if not options.workdir:
+        __file__ = os.path.join(os.getcwd(), "run_elastic.py")
         options.workdir = os.path.basename(__file__).replace(".py", "").replace("run_", "flow_")
 
     flow = flowtk.Flow(workdir=options.workdir)
@@ -102,13 +102,12 @@ def build_flow(options):
     return flow
 
 
-# This block generates the thumbnails in the Abipy gallery.
+# This block generates the thumbnails in the AbiPy gallery.
 # You can safely REMOVE this part if you are using this script for production runs.
 if os.getenv("READTHEDOCS", False):
     __name__ = None
     import tempfile
     options = flowtk.build_flow_main_parser().parse_args(["-w", tempfile.mkdtemp()])
-    #build_flow(options).plot_networkx(with_edge_labels=False, tight_layout=True)
     build_flow(options).graphviz_imshow()
 
 
