@@ -11,7 +11,6 @@ for each q-point, only the independent atomic perturbations are computed.
 The final results (out_DDB, out_DVDB) will be produced automatically at the end of the run
 and saved in the ``outdata/`` of the work.
 """
-from __future__ import division, print_function, unicode_literals, absolute_import
 
 import sys
 import os
@@ -19,6 +18,7 @@ import abipy.abilab as abilab
 import abipy.data as abidata
 
 from abipy import flowtk
+
 
 def make_scf_input(paral_kgb=0):
     """
@@ -54,7 +54,7 @@ def build_flow(options):
     """
     # Working directory (default is the name of the script with '.py' removed and "run_" replaced by "flow_")
     if not options.workdir:
-        options.workdir = os.path.basename(__file__).replace(".py", "").replace("run_", "flow_")
+        options.workdir = os.path.basename(sys.argv[0]).replace(".py", "").replace("run_", "flow_")
 
     flow = flowtk.Flow(workdir=options.workdir)
 
@@ -71,13 +71,12 @@ def build_flow(options):
     return flow
 
 
-# This block generates the thumbnails in the Abipy gallery.
+# This block generates the thumbnails in the AbiPy gallery.
 # You can safely REMOVE this part if you are using this script for production runs.
 if os.getenv("READTHEDOCS", False):
     __name__ = None
     import tempfile
     options = flowtk.build_flow_main_parser().parse_args(["-w", tempfile.mkdtemp()])
-    #build_flow(options).plot_networkx(with_edge_labels=False, tight_layout=True)
     build_flow(options).graphviz_imshow()
 
 

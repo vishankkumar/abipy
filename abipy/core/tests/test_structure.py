@@ -1,6 +1,4 @@
 """Tests for structure module"""
-from __future__ import print_function, division, absolute_import, unicode_literals
-
 import numpy as np
 import sys
 import abipy.data as abidata
@@ -18,7 +16,7 @@ class TestStructure(AbipyTest):
         """Initialize Structure from Netcdf data files"""
 
         for filename in abidata.WFK_NCFILES + abidata.GSR_NCFILES:
-            print("About to read file %s" % filename)
+            #print("About to read file %s" % filename)
             structure = Structure.from_file(filename)
             str(structure)
             structure.to_string(verbose=2)
@@ -57,11 +55,6 @@ class TestStructure(AbipyTest):
         kfrac_coords = si.get_kcoords_from_names(["G", "X", "L", "Gamma"])
         self.assert_equal(kfrac_coords,
             ([[0. , 0. , 0. ], [0.5, 0. , 0.5], [0.5, 0.5, 0.5], [0. , 0. , 0. ]]))
-
-        with self.assertRaises(TypeError):
-            Structure.as_structure({})
-        with self.assertRaises(TypeError):
-            Structure.as_structure([])
 
         si_wfk = Structure.as_structure(abidata.ref_file("si_scf_WFK.nc"))
         assert si_wfk.formula == "Si2"
@@ -147,6 +140,9 @@ class TestStructure(AbipyTest):
             #assert si.vtkview(show=False)  # Disabled due to (core dumped) on travis
             assert si.mayaview(show=False)
 
+        if self.has_panel():
+            assert hasattr(si.get_panel(), "show")
+
         assert si is Structure.as_structure(si)
         assert si == Structure.as_structure(si.to_abivars())
         assert si == Structure.from_abivars(si.to_abivars())
@@ -209,6 +205,10 @@ xred       0.0000000000    0.0000000000    0.0000000000
         s2coords = mgb2.get_symbol2coords()
         self.assert_equal(s2coords["Mg"], [[0, 0, 0]])
         self.assert_equal(s2coords["B"],  [[1/3, 2/3, 0.5], [2/3, 1/3, 0.5]])
+
+        new_mgb2 = mgb2.scale_lattice(mgb2.volume * 1.1)
+        self.assert_almost_equal(new_mgb2.volume, mgb2.volume * 1.1)
+        assert new_mgb2.lattice.is_hexagonal
 
         # TODO: This part should be tested more carefully
         mgb2.abi_sanitize()
@@ -296,7 +296,7 @@ xred       0.0000000000    0.0000000000    0.0000000000
 
         #print(old_structure.lattice._matrix)
         for site in old_structure:
-            print(structure.lattice.get_cartesian_coords(site.frac_coords))
+            _ = structure.lattice.get_cartesian_coords(site.frac_coords)
 
         # TODO: Check all this stuff more carefully
         #qpoint = [0, 0, 0]

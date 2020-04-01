@@ -2,29 +2,24 @@
 """
 Interface to the GSR.nc_ file storing the Ground-state results and the electron band structure.
 """
-from __future__ import print_function, division, unicode_literals, absolute_import
-
 import numpy as np
 import pandas as pd
 import pymatgen.core.units as units
 import abipy.core.abinit_units as abu
 
-from collections import OrderedDict, Iterable, defaultdict
+from collections import OrderedDict
 from tabulate import tabulate
-from monty.string import is_string, list_strings, marquee
+from monty.string import list_strings, marquee
 from monty.termcolor import cprint
 from monty.collections import AttrDict, dict2namedtuple
 from monty.functools import lazy_property
-from pymatgen.core.units import EnergyArray, ArrayWithUnit
+from pymatgen.core.units import ArrayWithUnit
 from pymatgen.entries.computed_entries import ComputedEntry, ComputedStructureEntry
 from abipy.core.mixins import AbinitNcFile, Has_Header, Has_Structure, Has_ElectronBands, NotebookWriter
 from abipy.tools.plotting import add_fig_kwargs, get_axarray_fig_plt
 from abipy.tools.tensors import Stress
 from abipy.abio.robots import Robot
 from abipy.electrons.ebands import ElectronsReader, RobotWithEbands
-
-import logging
-logger = logging.getLogger(__name__)
 
 
 __all__ = [
@@ -55,8 +50,7 @@ class GsrFile(AbinitNcFile, Has_Header, Has_Structure, Has_ElectronBands, Notebo
         return cls(filepath)
 
     def __init__(self, filepath):
-        super(GsrFile, self).__init__(filepath)
-
+        super().__init__(filepath)
         self.reader = r = GsrReader(filepath)
 
         # Initialize the electron bands from file
@@ -140,6 +134,7 @@ class GsrFile(AbinitNcFile, Has_Header, Has_Structure, Has_ElectronBands, Notebo
 
     @lazy_property
     def max_force(self):
+        """Max cart force in eV / Ang"""
         fmods = np.sqrt([np.dot(force, force) for force in self.cart_forces])
         return fmods.max()
 
@@ -235,6 +230,13 @@ class GsrFile(AbinitNcFile, Has_Header, Has_Structure, Has_ElectronBands, Notebo
         else:
             return ComputedEntry(self.structure.composition, self.energy,
                                  parameters=parameters, data=data)
+
+    def get_panel(self):
+        """
+        Build panel with widgets to interact with the |GsrFile| either in a notebook or in panel app.
+        """
+        from abipy.panels.gsr import GsrFilePanel
+        return GsrFilePanel(self).get_panel()
 
     def yield_figs(self, **kwargs):  # pragma: no cover
         """
@@ -603,6 +605,13 @@ class GsrRobot(Robot, RobotWithEbands):
         yield self.plot_lattice_convergence(show=False)
         yield self.plot_gsr_convergence(show=False)
         for fig in self.get_ebands_plotter().yield_figs(): yield fig
+
+    def get_panel(self):
+        """
+        Build panel with widgets to interact with the |GsrRobot| either in a notebook or in panel app.
+        """
+        from abipy.panels.gsr import GsrRobotPanel
+        return GsrRobotPanel(self).get_panel()
 
     def write_notebook(self, nbpath=None):
         """

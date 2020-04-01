@@ -1,6 +1,4 @@
 """"Tests for HIST.nc files."""
-from __future__ import division, print_function, unicode_literals
-
 import abipy.data as abidata
 from abipy import abilab
 from abipy.core.testing import AbipyTest
@@ -65,8 +63,8 @@ class HistFileTest(AbipyTest):
         self.assert_almost_equal(xdatcar.structures[-1].frac_coords, hist.structures[-1].frac_coords)
 
         xdatcar_nogroup = hist.to_xdatcar(filepath=None, groupby_type=False)
-        assert xdatcar.structures[0] ==  xdatcar_nogroup.structures[0]
-        assert xdatcar.structures[-1] ==  xdatcar_nogroup.structures[-1]
+        assert xdatcar.structures[0] == xdatcar_nogroup.structures[0]
+        assert xdatcar.structures[-1] == xdatcar_nogroup.structures[-1]
 
         # Test matplotlib plots.
         if self.has_matplotlib():
@@ -80,6 +78,9 @@ class HistFileTest(AbipyTest):
         if self.has_mayavi():
             assert hist.mvplot_trajectories(show=False)
             #assert hist.mvanimate(delay=100)
+
+        if self.has_panel():
+            assert hasattr(hist.get_panel(), "show")
 
         hist.close()
 

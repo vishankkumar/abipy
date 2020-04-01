@@ -1,22 +1,18 @@
 # coding: utf-8
-"""This module ..."""
-from __future__ import print_function, division, unicode_literals, absolute_import
-
+"""This module provides mixin classes"""
 import abc
 import os
-import six
 import collections
 import tempfile
 import pickle
+import numpy as np
 
 from time import ctime
-import numpy as np
 from monty.os.path import which
 from monty.termcolor import cprint
-from monty.string import is_string, list_strings
+from monty.string import list_strings
 from monty.collections import dict2namedtuple
 from monty.functools import lazy_property
-from abipy.flowtk.netcdf import NetcdfReader, NO_DEFAULT
 
 
 __all__ = [
@@ -28,8 +24,8 @@ __all__ = [
     "Has_Header",
 ]
 
-@six.add_metaclass(abc.ABCMeta)
-class BaseFile(object):
+
+class BaseFile(metaclass=abc.ABCMeta):
     """
     Abstract base class defining the methods that must be implemented
     by the concrete classes representing the different files produced by ABINIT.
@@ -49,8 +45,7 @@ class BaseFile(object):
     @classmethod
     def from_file(cls, filepath):
         """Initialize the object from a string."""
-        if isinstance(filepath, cls):
-            return filepath
+        if isinstance(filepath, cls): return filepath
 
         #print("Perhaps the subclass", cls, "must redefine the classmethod from_file.")
         return cls(filepath)
@@ -81,8 +76,7 @@ class BaseFile(object):
 
     def filestat(self, as_string=False):
         """
-        Dictionary with file metadata
-        if ``as_string`` is True, a string is returned.
+        Dictionary with file metadata, if ``as_string`` is True, a string is returned.
         """
         d = get_filestat(self.filepath)
         if not as_string: return d
@@ -90,7 +84,7 @@ class BaseFile(object):
 
     @abc.abstractmethod
     def close(self):
-        """Close file."""
+        """Close the file."""
 
     def __enter__(self):
         return self
@@ -98,15 +92,6 @@ class BaseFile(object):
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Activated at the end of the with statement. It automatically closes the file."""
         self.close()
-
-    #def __del__(self):
-    #    """
-    #    Called when the instance is about to be destroyed.
-    #    """
-    #    try:
-    #        self.close()
-    #    finally:
-    #        super(BaseFile, self).__close__(self)
 
 
 class TextFile(BaseFile):
@@ -140,7 +125,7 @@ class TextFile(BaseFile):
         self._file.seek(offset, whence)
 
 
-@six.add_metaclass(abc.ABCMeta)
+
 class AbinitNcFile(BaseFile):
     """
     Abstract class representing a Netcdf file with data saved
@@ -164,7 +149,6 @@ class AbinitNcFile(BaseFile):
         """
 
 
-@six.add_metaclass(abc.ABCMeta)
 class AbinitFortranFile(BaseFile):
     """
     Abstract class representing a fortran file containing output data from abinit.
@@ -190,7 +174,7 @@ class CubeFile(BaseFile):
     """
     def __init__(self, filepath):
         from abipy.iotools.cube import cube_read_structure_mesh_data
-        super(CubeFile, self).__init__(filepath)
+        super().__init__(filepath)
         self.structure, self.mesh, self.data = cube_read_structure_mesh_data(self.filepath)
 
     def close(self):
@@ -203,9 +187,8 @@ class CubeFile(BaseFile):
     #        cube_write_data(fh, data, mesh):
 
 
-@six.add_metaclass(abc.ABCMeta)
-class Has_Structure(object):
-    """Mixin class for :class:`AbinitNcFile` containing crystallographic data."""
+class Has_Structure(metaclass=abc.ABCMeta):
+    """Mixin class for |AbinitNcFile| containing crystallographic data."""
 
     @abc.abstractproperty
     def structure(self):
@@ -295,9 +278,8 @@ class Has_Structure(object):
         yield self.structure.plot(show=False)
 
 
-@six.add_metaclass(abc.ABCMeta)
-class Has_ElectronBands(object):
-    """Mixin class for :class:`AbinitNcFile` containing electron data."""
+class Has_ElectronBands(metaclass=abc.ABCMeta):
+    """Mixin class for |AbinitNcFile| containing electron data."""
 
     @abc.abstractproperty
     def ebands(self):
@@ -389,10 +371,9 @@ class Has_ElectronBands(object):
             e(self.yield_ebands_figs(**kwargs))
 
 
-@six.add_metaclass(abc.ABCMeta)
-class Has_PhononBands(object):
+class Has_PhononBands(metaclass=abc.ABCMeta):
     """
-    Mixin class for :class:`AbinitNcFile` containing phonon data.
+    Mixin class for |AbinitNcFile| containing phonon data.
     """
 
     @abc.abstractproperty
@@ -485,49 +466,120 @@ def get_filestat(filepath):
     ])
 
 
-@six.add_metaclass(abc.ABCMeta)
-class NotebookWriter(object):
+class NotebookWriter(metaclass=abc.ABCMeta):
     """
     Mixin class for objects that are able to generate jupyter_ notebooks.
     Subclasses must provide a concrete implementation of `write_notebook`.
     """
-    def make_and_open_notebook(self, nbpath=None, foreground=False):  # pragma: no cover
+
+    def make_and_open_notebook(self, nbpath=None, foreground=False,
+                               classic_notebook=False, no_browser=False):  # pragma: no cover
         """
         Generate an jupyter_ notebook and open it in the browser.
 
         Args:
             nbpath: If nbpath is None, a temporay file is created.
-            foreground: By default, jupyter is executed in background and stdout, stderr are redirected
+            foreground: By default, jupyter is executed in background and stdout, stderr are redirected.
             to devnull. Use foreground to run the process in foreground
+            classic_notebook: True to use the classic notebook instead of jupyter-lab (default)
+            no_browser: Start the jupyter server to serve the notebook but don't open the notebook in the browser.
+                        Use this option to connect remotely from localhost to the machine running the kernel
 
-        Return:
-            system exit code.
+        Return: system exit code.
 
-        Raise:
-            `RuntimeError` if jupyter_ is not in $PATH
+        Raise: `RuntimeError` if jupyter executable is not in $PATH
         """
         nbpath = self.write_notebook(nbpath=nbpath)
 
-        if which("jupyter") is None:
-            raise RuntimeError("Cannot find jupyter in $PATH. Install it with `conda install jupyter or `pip install jupyter`")
+        if not classic_notebook:
+            # Use jupyter-lab.
+            app_path = which("jupyter-lab")
+            if app_path is None:
+                raise RuntimeError("""
+Cannot find jupyter-lab application in $PATH. Install it with:
 
-        # Use jupyter-lab instead of classic notebook if possible.
-        has_jupyterlab = which("jupyter-lab") is not None
-        #has_jupyterlab = False
-        appname = "jupyter-lab" if has_jupyterlab else "jupyter notebook"
+    conda install -c conda-forge jupyterlab
 
-        if foreground:
-            return os.system("%s %s" % (appname, nbpath))
+or:
+
+    pip install jupyterlab
+
+See also https://jupyterlab.readthedocs.io/
+""")
+
         else:
-            fd, tmpname = tempfile.mkstemp(text=True)
-            print(tmpname)
-            cmd = "%s %s" % (appname, nbpath)
+            # Use classic notebook
+            app_path = which("jupyter")
+            if app_path is None:
+                raise RuntimeError("""
+Cannot find jupyter application in $PATH. Install it with:
+
+    conda install -c conda-forge jupyter
+
+or:
+
+    pip install jupyterlab
+
+See also https://jupyter.readthedocs.io/en/latest/install.html
+""")
+
+        if not no_browser:
+
+            if foreground:
+                return os.system("%s %s" % (app_path, nbpath))
+            else:
+                fd, tmpname = tempfile.mkstemp(text=True)
+                print(tmpname)
+                cmd = "%s %s" % (app_path, nbpath)
+                print("Executing:", cmd, "\nstdout and stderr redirected to %s" % tmpname)
+                import subprocess
+                process = subprocess.Popen(cmd.split(), shell=False, stdout=fd, stderr=fd)
+                cprint("pid: %s" % str(process.pid), "yellow")
+                return 0
+
+        else:
+            # Based on https://github.com/arose/nglview/blob/master/nglview/scripts/nglview.py
+            notebook_name = os.path.basename(nbpath)
+            dirname = os.path.dirname(nbpath)
+            print("nbpath:", nbpath)
+
+            import socket
+            def find_free_port():
+                """https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number"""
+                from contextlib import closing
+                with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+                    s.bind(('', 0))
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    return s.getsockname()[1]
+
+            username = os.getlogin()
+            hostname = socket.gethostname()
+            port = find_free_port()
+
+            client_cmd = "ssh -NL localhost:{port}:localhost:{port} {username}@{hostname}".format(
+                username=username, hostname=hostname, port=port)
+
+            print(f"""
+Using port: {port}
+
+\033[32m In your local machine, run: \033[0m
+
+                {client_cmd}
+
+\033[32m NOTE: you might want to replace {hostname} by full hostname with domain name \033[0m
+\033[32m Then open your web browser, copy and paste the URL: \033[0m
+
+http://localhost:{port}/notebooks/{notebook_name}
+""")
+            if not classic_notebook:
+              cmd = f'{app_path} {notebook_name} --no-browser --port {port} --notebook-dir {dirname}'
+            else:
+              cmd = f'{app_path} notebook {notebook_name} --no-browser --port {port} --notebook-dir {dirname}'
+
             print("Executing:", cmd)
-            print("stdout and stderr redirected to %s" % tmpname)
-            import subprocess
-            process = subprocess.Popen(cmd.split(), shell=False, stdout=fd, stderr=fd)
-            cprint("pid: %s" % str(process.pid), "yellow")
-            return 0
+            print('NOTE: make sure to open `{}` in your local machine\n'.format(notebook_name))
+
+            return os.system(cmd)
 
     @staticmethod
     def get_nbformat_nbv():
@@ -549,12 +601,15 @@ class NotebookWriter(object):
 
         nb.cells.extend([
             nbv.new_code_cell("""\
-from __future__ import print_function, division, unicode_literals, absolute_import
-
 import sys, os
 import numpy as np
 
 %matplotlib notebook
+
+# Use this magic for jupyterlab.
+# For installation instructions, see https://github.com/matplotlib/jupyter-matplotlib
+#%matplotlib widget
+
 from IPython.display import display
 
 # This to render pandas DataFrames with https://github.com/quantopian/qgrid
@@ -569,10 +624,7 @@ from abipy import abilab
 # Tell AbiPy we are inside a notebook and use seaborn settings for plots.
 # See https://seaborn.pydata.org/generated/seaborn.set.html#seaborn.set
 abilab.enable_notebook(with_seaborn=True)
-
-# AbiPy widgets for pandas and seaborn plot APIs
-#import abipy.display.seabornw import snw
-#import abipy.display.pandasw import pdw""")
+""")
         ])
 
         return nbformat, nbv, nb
@@ -631,8 +683,7 @@ abilab.enable_notebook(with_seaborn=True)
         Save the status of the object in pickle format.
         If filepath is None, a temporary file is created.
 
-        Return:
-            name of the pickle file.
+        Return: The name of the pickle file.
         """
         if filepath is None:
             _, filepath = tempfile.mkstemp(suffix='.pickle')
@@ -641,7 +692,6 @@ abilab.enable_notebook(with_seaborn=True)
             pickle.dump(self, fh)
             return filepath
 
-    # TODO: Activate this
     @abc.abstractmethod
     def yield_figs(self, **kwargs):  # pragma: no cover
         """
@@ -665,9 +715,5 @@ class Has_Header(object):
     def hdr(self):
         """|AttrDict| with the Abinit header e.g. hdr.ecut."""
         return self.reader.read_abinit_hdr()
-
-    #def get_hdr_params(self):
-    #    """:class:`OrderedDict` with the convergence parameters."""
-    #    return collections.OrderedDict([
 
     #def compare_hdr(self, other_hdr):

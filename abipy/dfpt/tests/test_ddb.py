@@ -1,6 +1,4 @@
 """Tests for phonons"""
-from __future__ import print_function, division, unicode_literals, absolute_import
-
 import os
 import numpy as np
 import abipy.data as abidata
@@ -21,11 +19,15 @@ class DdbTest(AbipyTest):
     def test_alas_ddb_1qpt_phonons(self):
         """Testing DDB with one q-point"""
         with DdbFile(os.path.join(test_dir, "AlAs_1qpt_DDB")) as ddb:
-            repr(ddb); print(ddb)
+            repr(ddb); str(ddb)
             # Test qpoints.
             assert len(ddb.qpoints) == 1
             assert np.all(ddb.qpoints[0] == [0.25, 0, 0])
             assert ddb.natom == len(ddb.structure)
+            s = ddb.get_string()
+            with DdbFile.from_string(s) as same_ddb:
+                assert same_ddb.qpoints[0] == ddb.qpoints[0]
+                assert same_ddb.structure == ddb.structure
 
             # Test header
             h = ddb.header
@@ -49,7 +51,7 @@ class DdbTest(AbipyTest):
             assert struct.formula == "Al1 As1"
 
             # Test interface with Anaddb.
-            print(ddb.qpoints[0])
+            str(ddb.qpoints[0])
             assert ddb.qindex(ddb.qpoints[0]) == 0
 
             phbands = ddb.anaget_phmodes_at_qpoint(qpoint=ddb.qpoints[0], verbose=1)
@@ -66,7 +68,7 @@ class DdbTest(AbipyTest):
                     ddb.anaget_phbst_and_phdos_files(ngqpt=(4, 4, 4), verbose=1)
                 except Exception as exc:
                     # This to test AnaddbError.__str__
-                    print(exc)
+                    str(exc)
                     raise
 
             # Cannot compute DOS since we need a mesh.
@@ -85,7 +87,7 @@ class DdbTest(AbipyTest):
 
             lines = blocks[0]["data"]
             assert lines[0].rstrip() == " 2nd derivatives (non-stat.)  - # elements :      36"
-            assert lines[2].rstrip() ==  "   1   1   1   1  0.80977066582497D+01 -0.46347282336361D-16"
+            assert lines[2].rstrip() == "   1   1   1   1  0.80977066582497D+01 -0.46347282336361D-16"
             assert lines[-1].rstrip() == "   3   2   3   2  0.49482344898401D+01 -0.44885664256253D-17"
 
             for qpt in ddb.qpoints:
@@ -95,7 +97,7 @@ class DdbTest(AbipyTest):
             assert ddb.replace_block_for_qpoint(ddb.qpoints[0], blocks[0]["data"])
 
             # Write new DDB file.
-            tmp_file = nbpath=self.get_tmpname(text=True)
+            tmp_file = self.get_tmpname(text=True)
             ddb.write(tmp_file)
             with DdbFile(tmp_file) as new_ddb:
                 assert ddb.qpoints == new_ddb.qpoints
@@ -167,12 +169,22 @@ class DdbTest(AbipyTest):
                 title="Phonon bands and DOS of %s" % phbands.structure.formula)
             assert phbands_file.plot_phbands(show=False)
 
+        if self.has_panel():
+            assert hasattr(ddb.get_panel(), "show")
+
         # Get epsinf and becs
         r = ddb.anaget_epsinf_and_becs(chneut=1, verbose=1)
         epsinf, becs = r.epsinf, r.becs
         assert np.all(becs.values == 0)
         repr(becs); str(becs)
         assert becs.to_string(verbose=2)
+
+        same_becs = self.decode_with_MSON(becs)
+        self.assert_almost_equal(same_becs.values, becs.values)
+
+        max_err = becs.check_site_symmetries(verbose=2)
+        #print(max_err)
+        assert max_err == 0
 
         self.assert_almost_equal(phdos.idos.values[-1], 3 * len(ddb.structure), decimal=1)
         phbands_file.close()
@@ -202,12 +214,13 @@ class DdbTest(AbipyTest):
             assert ifc.plot_longitudinal_ifc_ewald(show=False)
 
         # Test get_coarse.
-        coarse_ddb = ddb.get_coarse([2, 2, 2])
-        # Check whether anaddb can read the coarse DDB.
-        coarse_phbands_file, coarse_phdos_file = coarse_ddb.anaget_phbst_and_phdos_files(nqsmall=4, ndivsm=1, verbose=1)
-        coarse_phbands_file.close()
-        coarse_phdos_file.close()
-        coarse_ddb.close()
+        with ddb.get_coarse([2, 2, 2]) as coarse_ddb:
+            # Check whether anaddb can read the coarse DDB.
+
+            with coarse_ddb.anaget_phbst_and_phdos_files(nqsmall=4, ndivsm=1, verbose=1) as g:
+                coarse_phbands_file, coarse_phdos_file = g
+                assert coarse_phbands_file.filepath == g.files[0].filepath
+                assert coarse_phdos_file.filepath == g.files[1].filepath
 
         ddb.close()
 
@@ -375,6 +388,9 @@ class DdbTest(AbipyTest):
             for qpoint in ddb.qpoints:
                 assert qpoint in ddb.computed_dynmat
 
+            raman = ddb.anaget_raman()
+            self.assertAlmostEqual(raman.susceptibility[5, 0, 1], -0.0114683, places=5)
+
 
 class DielectricTensorGeneratorTest(AbipyTest):
 
@@ -449,7 +465,7 @@ class DdbRobotTest(AbipyTest):
             assert len(robot) == 2
 
             # Test anacompare_elastic
-            ddb_header_keys=["nkpt", "tsmear"]
+            ddb_header_keys = ["nkpt", "tsmear"]
             r = robot.anacompare_elastic(ddb_header_keys=ddb_header_keys, with_path=True,
                 with_structure=True, with_spglib=False, relaxed_ion="automatic", piezo="automatic", verbose=1)
             df, edata_list = r.df, r.elastdata_list
@@ -507,7 +523,7 @@ class PhononComputationTest(AbipyTest):
             self.assert_almost_equal(phbands.amu_symbol["B"],  phbands.amu[5.0])
 
             # Total PHDOS should integrate to 3 * natom
-            # Note that anaddb does not renormalize the DOS so we have to increate the tolerance.
+            # Note that anaddb does not renormalize the DOS so we have to increase the tolerance.
             #E       Arrays are not almost equal to 2 decimals
             #E        ACTUAL: 8.9825274146312282
             #E        DESIRED: 9
