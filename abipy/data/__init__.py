@@ -49,7 +49,7 @@ def pyscript(basename):
             # Ignore e.g. __init__.py and private scripts.
             if k.startswith("_"): continue
             if k in _SCRIPTS:
-                raise ValueError("Fond duplicated basenames with name %s\nPrevious %s" % (k, _SCRIPTS[k]))
+                raise ValueError("Fond duplicated basenames with name %s\nActual:%s\nPrevious: %s" % (k, p, _SCRIPTS[k]))
             _SCRIPTS[k] = p
 
     return _SCRIPTS[basename]
@@ -133,7 +133,7 @@ def ref_file(basename):
     else:
         path = os.path.join(dirpath, basename)
         if not os.path.exists(path):
-            raise ValueError("Cannot find reference file %s" % basename)
+            raise ValueError("Cannot find reference file `%s`, at abs_path: `%s`" % (basename, path))
         return path
 
 

@@ -1,8 +1,21 @@
+Release 0.8.0: xxxx-xx-xx
+
+    * Add abicheck.py --create-config option to install predefined yaml configuration files
+    * Add support for NSCF calculations with meta-GGA.
+    * Preliminary support for panel dashboards exposed via `abiopen FILE --panel` and `abistruct panel FILE`.
+      Note that not all Abinit files are supported at present.
+    * Add examples and flows for effective mass calculations
+    * Add examples for quasi-harmonic calculations and post-processing tools
+    * Add support for JSON files (including MSONable format) to abiopen.py
+      Supports `--notebook`, `--panel` options such as `abiopen.py FILE.json --panel`
+    * Improved support for EPH calculations.
+    * Add `primitive` command to `abistruct.py` to get primitive structure from spglib
+
 Release 0.7.0: 2019-10-18
 
     * Remove support for py2. Now Abipy requires py >= 3.6 (3.8 is not yet supported)
     * AbiPy now requires pymatgen >= 2019.10.16
-    * Move workflow code from pymatgen to abipy.flowk
+    * Move workflow code from pymatgen to abipy.flowtk
     * Improved support for EPH calculations.
 
 Release:0.3.0 2017-12-26

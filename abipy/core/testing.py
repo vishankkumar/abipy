@@ -12,7 +12,10 @@ import subprocess
 import json
 import tempfile
 import unittest
-import numpy.testing.utils as nptu
+try:
+    import numpy.testing as nptu
+except ImportError:
+    import numpy.testing.utils as nptu
 import abipy.data as abidata
 
 from functools import wraps
@@ -208,15 +211,15 @@ def input_equality_check(ref_file, input2, rtol=1e-05, atol=1e-08, equal_nan=Fal
         val_list_t = flatten_var(val_t)
         val_list_r = flatten_var(val_r)
         error = False
-        print(var)
-        print(val_list_r, type(val_list_r[0]))
-        print(val_list_t, type(val_list_t[0]))
+        #print(var)
+        #print(val_list_r, type(val_list_r[0]))
+        #print(val_list_t, type(val_list_t[0]))
         for k, var_item in enumerate(val_list_r):
             try:
                 error = error or check_var(val_list_t[k], val_list_r[k])
             except IndexError:
-                print(val_list_t, type(val_list_t[0]))
-                print(val_list_r, type(val_list_r[0]))
+                #print(val_list_t, type(val_list_t[0]))
+                #print(val_list_r, type(val_list_r[0]))
                 raise RuntimeError('two value lists were not flattened in the same way, try to add the collection'
                                    'type to the tree_types tuple in flatten_var')
 
@@ -237,9 +240,10 @@ def input_equality_check(ref_file, input2, rtol=1e-05, atol=1e-08, equal_nan=Fal
 
 
 def get_gsinput_si(usepaw=0, as_task=False):
-    """Build and return GS input file for silicon."""
+    """
+    Build and return a GS input file for silicon or a Task if `as_task`
+    """
     pseudos = abidata.pseudos("14si.pspnc") if usepaw == 0 else abidata.pseudos("Si.GGA_PBE-JTH-paw.xml")
-    #silicon = abilab.Structure.zincblende(5.431, ["Si", "Si"], units="ang")
     silicon = abidata.cif_file("si.cif")
 
     from abipy.abio.inputs import AbinitInput
@@ -247,7 +251,6 @@ def get_gsinput_si(usepaw=0, as_task=False):
     ecut = 6
     scf_input.set_vars(
         ecut=ecut,
-        pawecutdg=40,
         nband=6,
         paral_kgb=0,
         iomode=3,
@@ -258,6 +261,35 @@ def get_gsinput_si(usepaw=0, as_task=False):
 
     # K-point sampling (shifted)
     scf_input.set_autokmesh(nksmall=4)
+
+    if not as_task:
+        return scf_input
+    else:
+        from abipy.flowtk.tasks import ScfTask
+        return ScfTask(scf_input)
+
+
+def get_gsinput_alas_ngkpt(ngkpt, usepaw=0, as_task=False):
+    """
+    Build and return a GS input file for AlAs or a Task if `as_task`
+    """
+    if usepaw != 0: raise NotImplementedError("PAW")
+    pseudos = abidata.pseudos("13al.981214.fhi", "33as.pspnc")
+    structure = abidata.structure_from_ucell("AlAs")
+
+    from abipy.abio.inputs import AbinitInput
+    scf_input = AbinitInput(structure, pseudos=pseudos)
+
+    scf_input.set_vars(
+        nband=5,
+        ecut=8.0,
+        ngkpt=ngkpt,
+        nshiftk=1,
+        shiftk=[0, 0, 0],
+        tolvrs=1.0e-6,
+        diemac=12.0,
+    )
+
     if not as_task:
         return scf_input
     else:
@@ -319,7 +351,7 @@ class AbipyTest(PymatgenTest):
             return False
 
     @staticmethod
-    def has_python_graphviz(need_dotexec=False):
+    def has_python_graphviz(need_dotexec=True):
         """
         True if python-graphviz package is installed and dot executable in path.
         """
@@ -349,6 +381,35 @@ class AbipyTest(PymatgenTest):
         mlab.options.backend = "test"
         return True
 
+    def has_panel(self):
+        """False if Panel library is not installed."""
+        try:
+            import param
+            import panel as pn
+            import bokeh
+            return pn
+        except ImportError:
+            return False
+
+    def has_networkx(self):
+        """False if networkx library is not installed."""
+        try:
+            import networkx as nx
+            return nx
+        except ImportError:
+            return False
+
+    def has_graphviz(self):
+        """True if graphviz library is installed and `dot` in $PATH"""
+        try:
+            from graphviz import Digraph
+            import graphviz
+        except ImportError:
+            return False
+
+        if self.which("dot") is None: return False
+        return graphviz
+
     @staticmethod
     def get_abistructure_from_abiref(basename):
         """Return an Abipy |Structure| from the basename of one of the reference files."""
@@ -371,7 +432,7 @@ class AbipyTest(PymatgenTest):
     @staticmethod
     def get_tmpname(**kwargs):
         """Invoke mkstep with kwargs, return the name of a temporary file."""
-        fd, tmpname = tempfile.mkstemp(**kwargs)
+        _, tmpname = tempfile.mkstemp(**kwargs)
         return tmpname
 
     @staticmethod
@@ -475,6 +536,13 @@ class AbipyTest(PymatgenTest):
             msg = "This test requires bolztrap2 version %s %s" % (op, version)
             raise unittest.SkipTest(msg)
 
+    def skip_if_not_executable(self, executable):
+        """
+        Raise SkipTest if executable is not installed.
+        """
+        if self.which(executable) is None:
+            raise unittest.SkipTest("This test requires `%s` in PATH" % str(executable))
+
     @staticmethod
     def skip_if_not_pseudodojo():
         """
@@ -489,6 +557,14 @@ class AbipyTest(PymatgenTest):
     def get_mock_module():
         """Return mock module for testing. Raises ImportError if not found."""
         return get_mock_module()
+
+    def decode_with_MSON(self, obj):
+        """
+        Convert obj into JSON assuming MSONable protocolo. Return new object decoded with MontyDecoder
+        """
+        from monty.json import MSONable, MontyDecoder
+        self.assertIsInstance(obj, MSONable)
+        return json.loads(obj.to_json(), cls=MontyDecoder)
 
     @staticmethod
     def abivalidate_input(abinput, must_fail=False):
@@ -530,7 +606,9 @@ class AbipyTest(PymatgenTest):
 
         if errors:
             for e in errors:
+                print(90 * "=")
                 print(e)
+                print(90 * "=")
 
         assert not errors
 
@@ -563,6 +641,11 @@ class AbipyTest(PymatgenTest):
     @wraps(get_gsinput_si)
     def get_gsinput_si(*args, **kwargs):
         return get_gsinput_si(*args, **kwargs)
+
+    @staticmethod
+    @wraps(get_gsinput_alas_ngkpt)
+    def get_gsinput_alas_ngkpt(*args, **kwargs):
+        return get_gsinput_alas_ngkpt(*args, **kwargs)
 
 
 def notebook_run(path):

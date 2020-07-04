@@ -19,11 +19,15 @@ class DdbTest(AbipyTest):
     def test_alas_ddb_1qpt_phonons(self):
         """Testing DDB with one q-point"""
         with DdbFile(os.path.join(test_dir, "AlAs_1qpt_DDB")) as ddb:
-            repr(ddb); print(ddb)
+            repr(ddb); str(ddb)
             # Test qpoints.
             assert len(ddb.qpoints) == 1
             assert np.all(ddb.qpoints[0] == [0.25, 0, 0])
             assert ddb.natom == len(ddb.structure)
+            s = ddb.get_string()
+            with DdbFile.from_string(s) as same_ddb:
+                assert same_ddb.qpoints[0] == ddb.qpoints[0]
+                assert same_ddb.structure == ddb.structure
 
             # Test header
             h = ddb.header
@@ -47,7 +51,7 @@ class DdbTest(AbipyTest):
             assert struct.formula == "Al1 As1"
 
             # Test interface with Anaddb.
-            print(ddb.qpoints[0])
+            str(ddb.qpoints[0])
             assert ddb.qindex(ddb.qpoints[0]) == 0
 
             phbands = ddb.anaget_phmodes_at_qpoint(qpoint=ddb.qpoints[0], verbose=1)
@@ -64,7 +68,7 @@ class DdbTest(AbipyTest):
                     ddb.anaget_phbst_and_phdos_files(ngqpt=(4, 4, 4), verbose=1)
                 except Exception as exc:
                     # This to test AnaddbError.__str__
-                    print(exc)
+                    str(exc)
                     raise
 
             # Cannot compute DOS since we need a mesh.
@@ -165,12 +169,22 @@ class DdbTest(AbipyTest):
                 title="Phonon bands and DOS of %s" % phbands.structure.formula)
             assert phbands_file.plot_phbands(show=False)
 
+        if self.has_panel():
+            assert hasattr(ddb.get_panel(), "show")
+
         # Get epsinf and becs
         r = ddb.anaget_epsinf_and_becs(chneut=1, verbose=1)
         epsinf, becs = r.epsinf, r.becs
         assert np.all(becs.values == 0)
         repr(becs); str(becs)
         assert becs.to_string(verbose=2)
+
+        same_becs = self.decode_with_MSON(becs)
+        self.assert_almost_equal(same_becs.values, becs.values)
+
+        max_err = becs.check_site_symmetries(verbose=2)
+        #print(max_err)
+        assert max_err == 0
 
         self.assert_almost_equal(phdos.idos.values[-1], 3 * len(ddb.structure), decimal=1)
         phbands_file.close()
@@ -200,12 +214,13 @@ class DdbTest(AbipyTest):
             assert ifc.plot_longitudinal_ifc_ewald(show=False)
 
         # Test get_coarse.
-        coarse_ddb = ddb.get_coarse([2, 2, 2])
-        # Check whether anaddb can read the coarse DDB.
-        coarse_phbands_file, coarse_phdos_file = coarse_ddb.anaget_phbst_and_phdos_files(nqsmall=4, ndivsm=1, verbose=1)
-        coarse_phbands_file.close()
-        coarse_phdos_file.close()
-        coarse_ddb.close()
+        with ddb.get_coarse([2, 2, 2]) as coarse_ddb:
+            # Check whether anaddb can read the coarse DDB.
+
+            with coarse_ddb.anaget_phbst_and_phdos_files(nqsmall=4, ndivsm=1, verbose=1) as g:
+                coarse_phbands_file, coarse_phdos_file = g
+                assert coarse_phbands_file.filepath == g.files[0].filepath
+                assert coarse_phdos_file.filepath == g.files[1].filepath
 
         ddb.close()
 
@@ -372,6 +387,9 @@ class DdbTest(AbipyTest):
 
             for qpoint in ddb.qpoints:
                 assert qpoint in ddb.computed_dynmat
+
+            raman = ddb.anaget_raman()
+            self.assertAlmostEqual(raman.susceptibility[5, 0, 1], -0.0114683, places=5)
 
 
 class DielectricTensorGeneratorTest(AbipyTest):

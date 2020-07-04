@@ -1,6 +1,8 @@
 """
 Interface to the GKQ.nc file storing the e-ph matrix elements
 in the atomic representation (idir, ipert) for a single q-point.
+This file is produced by the eph code with eph_task -4.
+To analyze the e-ph scattering potentials, use v1qavg and eph_task 15 or -15
 """
 import numpy as np
 import abipy.core.abinit_units as abu
@@ -27,7 +29,6 @@ class GkqFile(AbinitNcFile, Has_Header, Has_Structure, Has_ElectronBands, Notebo
     def __init__(self, filepath):
         super().__init__(filepath)
         self.reader = GkqReader(filepath)
-        #self.alpha_gmin = self.reader.read_value("alpha_gmin")
 
     def __str__(self):
         """String representation."""
@@ -189,6 +190,7 @@ class GkqFile(AbinitNcFile, Has_Header, Has_Structure, Has_ElectronBands, Notebo
         """
         Plot the gkq matrix elements for a given q-point.
 
+        Args:
             mode: "phonon" to plot eph matrix elements in the phonon representation,
                   "atom" for atomic representation.
             with_glr: True to plot the long-range component estimated from Verdi's model.

@@ -2,17 +2,18 @@
 import numpy as np
 import os
 import abc
-from scipy.interpolate import UnivariateSpline
+import abipy.core.abinit_units as abu
 
+from scipy.interpolate import UnivariateSpline
 from monty.collections import dict2namedtuple
 from monty.functools import lazy_property
 from pymatgen.analysis.eos import EOS
 from abipy.core.func1d import Function1D
-from abipy.tools.plotting import add_fig_kwargs, get_ax_fig_plt
+from abipy.tools.plotting import add_fig_kwargs, get_ax_fig_plt, get_axarray_fig_plt
 from abipy.electrons.gsr import GsrFile
-from abipy.dfpt.phonons import PhononBandsPlotter, PhononDos
+from abipy.dfpt.ddb import DdbFile
+from abipy.dfpt.phonons import PhononBandsPlotter, PhononDos, PhdosFile
 from abipy.dfpt.gruneisen import GrunsNcFile
-import abipy.core.abinit_units as abu
 
 
 class AbstractQHA(metaclass=abc.ABCMeta):
@@ -111,15 +112,17 @@ class AbstractQHA(metaclass=abc.ABCMeta):
 
     @property
     def nvols(self):
+        """Number of volumes"""
         return len(self.volumes)
 
     @property
     def natoms(self):
+        """Number of atoms in the unit cell."""
         return len(self.structures[0])
 
     def set_eos(self, eos_name):
         """
-        Updates the EOS used for the fit.
+        Set the EOS model used for the fit.
 
         Args:
             eos_name: string indicating the expression used to fit the energies. See pymatgen.analysis.eos.EOS.
@@ -201,9 +204,9 @@ class AbstractQHA(metaclass=abc.ABCMeta):
         ax.plot(alpha.mesh, alpha.values, **kwargs)
         ax.set_xlabel(r'T (K)')
         ax.set_ylabel(r'$\alpha$ (K$^{-1}$)')
+        ax.grid(True)
 
         ax.set_xlim(tstart, tstop)
-
         ax.get_yaxis().get_major_formatter().set_powerlimits((0, 0))
 
         return fig
@@ -211,7 +214,7 @@ class AbstractQHA(metaclass=abc.ABCMeta):
     @add_fig_kwargs
     def plot_vol_vs_t(self, tstart=0, tstop=800, num=100, ax=None, **kwargs):
         """
-        Plots the volume as a function of the temperature.
+        Plot the volume as a function of the temperature.
 
         Args:
             tstart: The starting value (in Kelvin) of the temperature mesh.
@@ -233,8 +236,8 @@ class AbstractQHA(metaclass=abc.ABCMeta):
         ax.plot(f.temp, f.min_vol, **kwargs)
         ax.set_xlabel('T (K)')
         ax.set_ylabel(r'V (${\AA}^3$)')
-
         ax.set_xlim(tstart, tstop)
+        ax.grid(True)
 
         return fig
 
@@ -255,7 +258,6 @@ class AbstractQHA(metaclass=abc.ABCMeta):
 
         Returns: |matplotlib-Figure|
         """
-
         if temperatures is None:
             tv = self.get_t_for_vols([b.structure.volume for b in phbands], t_max=t_max)
             temperatures = []
@@ -285,7 +287,7 @@ class AbstractQHA(metaclass=abc.ABCMeta):
         Calculates the volume corresponding to a specific temperature.
 
         Args:
-            t: a temperature in K
+            t: temperature in K
 
         Returns:
             The volume
@@ -403,7 +405,6 @@ class AbstractQHA(metaclass=abc.ABCMeta):
         Returns:
             An instance of phonopy.qha.QHA
         """
-
         try:
             from phonopy.qha import QHA as QHA_phonopy
         except ImportError as exc:
@@ -431,7 +432,42 @@ class QHA(AbstractQHA):
     Provides some basic methods and plotting utils, plus a converter to write input files for phonopy-qha or to
     generate an instance of phonopy.qha.QHA. These can be used to obtain other quantities and plots.
     Does not include electronic entropic contributions for metals.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: QHA
     """
+
+    @classmethod
+    def from_files(cls, gsr_paths, phdos_paths):
+        """
+        Creates an instance of QHA from a list of GSR files and a list of PHDOS.nc files.
+        The list should have the same size and the volumes should match.
+
+        Args:
+            gsr_paths: list of paths to GSR files.
+            phdos_paths: list of paths to PHDOS.nc files.
+
+        Returns: A new instance of QHA
+        """
+        energies = []
+        structures = []
+        for gp in gsr_paths:
+            with GsrFile.from_file(gp) as g:
+                energies.append(g.energy)
+                structures.append(g.structure)
+
+        #doses = [PhononDos.as_phdos(dp) for dp in phdos_paths]
+
+        doses = []
+        structures_from_phdos = []
+        for path in phdos_paths:
+            with PhdosFile(path) as p:
+                doses.append(p.phdos)
+                structures_from_phdos.append(p.structure)
+
+        cls._check_volumes(structures, structures_from_phdos)
+
+        return cls(structures, doses, energies)
 
     def __init__(self, structures, doses, energies, eos_name='vinet', pressure=0):
         """
@@ -440,10 +476,27 @@ class QHA(AbstractQHA):
             doses: list of |PhononDos| at volumes corresponding to the structures.
             energies: list of SCF energies for the structures in eV.
             eos_name: string indicating the expression used to fit the energies. See pymatgen.analysis.eos.EOS.
-            pressure: value of the pressure in GPa that will be considered in the p*V contribution to the energy.
+            pressure: value of the pressure in GPa that will be considered in the p * V contribution to the energy.
         """
         super().__init__(structures=structures, energies=energies, eos_name=eos_name, pressure=pressure)
         self.doses = doses
+
+    @staticmethod
+    def _check_volumes(struct_list1, struct_list2):
+
+        lens = (len(struct_list1), len(struct_list2))
+        if lens[0] != lens[1]:
+            raise RuntimeError("Expecting lists with same number of structures. Got %s" % str(lens))
+        vols1 = [s.volume for s in struct_list1]
+        vols2 = [s.volume for s in struct_list2]
+        ierr = 0
+        for v1, v2 in zip(vols1, vols2):
+            if abs(v1 - v2) > 1e-3:
+                ierr += 1
+                print("Volume1: %s != Volume2: %s" % (v1, v2))
+
+        if ierr != 0:
+            raise RuntimeError("Expecting lists with same volumes!")
 
     def get_vib_free_energies(self, tstart=0, tstop=800, num=100):
         """
@@ -498,39 +551,43 @@ class QHA(AbstractQHA):
         return dict2namedtuple(tmesh=tmesh, cv=cv, free_energy=free_energy, entropy=entropy,
                                zpe=zpe)
 
+
+class QHA3PF(AbstractQHA):
+    """
+    Object to extract results in the quasi-harmonic approximation from several electronic energies at different
+    volumes and three phonon calculations.
+    Provides some basic methods and plotting utils, plus a converter to write input files for phonopy-qha or to
+    generate an instance of phonopy.qha.QHA. These can be used to obtain other quantities and plots.
+    Does not include electronic entropic contributions for metals.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: QHA3PF
+    """
+
     @classmethod
-    def from_files(cls, gsr_files_paths, phdos_files_paths):
+    def from_files(cls, gsr_paths, phdos_paths, ind_doses):
         """
         Creates an instance of QHA from a list of GSR files and a list of PHDOS.nc files.
         The list should have the same size and the volumes should match.
 
         Args:
-            gsr_files_paths: list of paths to GSR files.
-            phdos_files_paths: list of paths to PHDOS.nc files.
+            gsr_paths: list of paths to GSR files.
+            phdos_paths: list of paths to three PHDOS.nc files.
+            ind_doses: list of three values indicating, for each of the three doses, the index of the
+                corresponding gsr_file in "gsr_paths".
 
-        Returns:
-            A new instance of QHA
+        Returns: A new instance of QHA
         """
         energies = []
         structures = []
-        for gp in gsr_files_paths:
+        for gp in gsr_paths:
             with GsrFile.from_file(gp) as g:
                 energies.append(g.energy)
                 structures.append(g.structure)
 
-        doses = [PhononDos.as_phdos(dp) for dp in phdos_files_paths]
+        doses = [PhononDos.as_phdos(dp) for dp in phdos_paths]
 
-        return cls(structures, doses, energies)
-
-
-class QHA3PF(AbstractQHA):
-    """
-        Object to extract results in the quasi-harmonic approximation from several electronic energies at different
-        volumes and three phonon calculations.
-        Provides some basic methods and plotting utils, plus a converter to write input files for phonopy-qha or to
-        generate an instance of phonopy.qha.QHA. These can be used to obtain other quantities and plots.
-        Does not include electronic entropic contributions for metals.
-        """
+        return cls(structures, doses, energies, ind_doses)
 
     def __init__(self, structures, doses, energies, ind_doses, eos_name='vinet', pressure=0, fit_degree=2):
         """
@@ -633,42 +690,44 @@ class QHA3PF(AbstractQHA):
 
         return self._get_thermodynamic_prop("free_energy", tstart, tstop, num)
 
+
+class QHA3P(AbstractQHA):
+    """
+    Object to extract results in the quasi-harmonic approximation from several electronic energies at different
+    volumes and three phonon calculations.
+    Provides some basic methods and plotting utils, plus a converter to write input files for phonopy-qha or to
+    generate an instance of phonopy.qha.QHA. These can be used to obtain other quantities and plots.
+    Does not include electronic entropic contributions for metals.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: QHA3P
+    """
+
     @classmethod
-    def from_files(cls, gsr_files_paths, phdos_files_paths, ind_doses):
+    def from_files(cls, gsr_paths, grun_file_path, ind_doses):
         """
-        Creates an instance of QHA from a list og GSR files and a list PHDOS.nc files.
+        Creates an instance of QHA from a list of GSR files and a list PHDOS.nc files.
         The list should have the same size and the volumes should match.
 
         Args:
-            gsr_files_paths: list of paths to GSR files.
-            phdos_files_paths: list of paths to three PHDOS.nc files.
+            gsr_paths: list of paths to GSR files.
+            phdos_paths: list of paths to three PHDOS.nc files.
             ind_doses: list of three values indicating, for each of the three doses, the index of the
-                corresponding gsr_file in "gsr_files_paths".
+                corresponding gsr_file in "gsr_paths".
 
         Returns:
             A new instance of QHA
         """
-
         energies = []
         structures = []
-        for gp in gsr_files_paths:
+        for gp in gsr_paths:
             with GsrFile.from_file(gp) as g:
                 energies.append(g.energy)
                 structures.append(g.structure)
 
-        doses = [PhononDos.as_phdos(dp) for dp in phdos_files_paths]
+        gruns = GrunsNcFile(grun_file_path)
 
-        return cls(structures, doses, energies, ind_doses)
-
-
-class QHA3P(AbstractQHA):
-    """
-        Object to extract results in the quasi-harmonic approximation from several electronic energies at different
-        volumes and three phonon calculations.
-        Provides some basic methods and plotting utils, plus a converter to write input files for phonopy-qha or to
-        generate an instance of phonopy.qha.QHA. These can be used to obtain other quantities and plots.
-        Does not include electronic entropic contributions for metals.
-        """
+        return cls(structures, gruns, energies, ind_doses)
 
     def __init__(self, structures, gruns, energies, ind_grun, eos_name='vinet', pressure=0):
         """
@@ -686,6 +745,10 @@ class QHA3P(AbstractQHA):
         self.grun = gruns
         self.ind_grun = ind_grun
         self._ind_energy_only = [i for i in range(len(structures)) if i not in ind_grun]
+
+    def close(self):
+        """Close files."""
+        self.grun.close()
 
     def get_thermodynamic_properties(self, tstart=0, tstop=800, num=100):
         """
@@ -706,7 +769,6 @@ class QHA3P(AbstractQHA):
                 entropy: entropy, in eV/K. Shape (nvols, num).
                 zpe: zero point energy in eV. Shape (nvols).
         """
-
         w = self.fitted_frequencies
 
         tmesh = np.linspace(tstart, tstop, num)
@@ -766,7 +828,6 @@ class QHA3P(AbstractQHA):
         Returns:
             A numpy array of `num` values of the vibrational contribution to the free energy
         """
-
         w = self.fitted_frequencies
 
         tmesh = np.linspace(tstart, tstop, num)
@@ -779,33 +840,6 @@ class QHA3P(AbstractQHA):
 
         return f
 
-    @classmethod
-    def from_files(cls, gsr_files_paths, grun_file_path, ind_doses):
-        """
-        Creates an instance of QHA from a list og GSR files and a list PHDOS.nc files.
-        The list should have the same size and the volumes should match.
-
-        Args:
-            gsr_files_paths: list of paths to GSR files.
-            phdos_files_paths: list of paths to three PHDOS.nc files.
-            ind_doses: list of three values indicating, for each of the three doses, the index of the
-                corresponding gsr_file in "gsr_files_paths".
-
-        Returns:
-            A new instance of QHA
-        """
-
-        energies = []
-        structures = []
-        for gp in gsr_files_paths:
-            with GsrFile.from_file(gp) as g:
-                energies.append(g.energy)
-                structures.append(g.structure)
-
-        gruns = GrunsNcFile(grun_file_path)
-
-        return cls(structures, gruns, energies, ind_doses)
-
 
 def get_free_energy(w, weights, t):
     """
@@ -816,7 +850,6 @@ def get_free_energy(w, weights, t):
          weights: the weights of the q-points
          t: the temperature
     """
-
     wdkt = w / (abu.kb_eVK * t)
 
     # if w=0 set fe=0
@@ -835,7 +868,6 @@ def get_cv(w, weights, t):
          weights: the weights of the q-points
          t: the temperature
     """
-
     wdkt = w / (abu.kb_eVK * t)
 
     # if w=0 set cv=0
@@ -853,7 +885,6 @@ def get_zero_point_energy(w, weights):
          w: the phonon frequencies
          weights: the weights of the q-points
     """
-
     zpe = np.choose(w > 0, (0, w / 2))
     ind = np.where(w >= 0)
 
@@ -869,7 +900,6 @@ def get_entropy(w, weights, t):
          weights: the weights of the q-points
          t: the temperature
     """
-
     wd2kt = w / (2 * abu.kb_eVK * t)
     coth = lambda x: 1.0 / np.tanh(x)
 
@@ -877,3 +907,129 @@ def get_entropy(w, weights, t):
     ind = np.where(w >= 0)
 
     return np.dot(weights[ind[0]], s[ind]).sum()
+
+
+class AbstractQmeshAnalyzer(metaclass=abc.ABCMeta):
+    """
+    Abstract class for the analysis of the convergence wrt to the q-mesh used to compute the
+    phonon DOS. Relies on abstract methods implemented in AbstractQHA.
+    """
+
+    fontsize = 8
+    colormap = "viridis"
+
+    def _consistency_check(self):
+        if not hasattr(self, "qha_list") or not self.qha_list:
+            raise RuntimeError("Please call the run method to compute the QHA!")
+
+    def set_eos(self, eos_name):
+        """
+        Set the EOS model used for the fit.
+
+        Args:
+            eos_name: string indicating the expression used to fit the energies. See pymatgen.analysis.eos.EOS.
+        """
+        self._consistency_check()
+        for qha in self.qha_list:
+            qha.set_eos(eos_name)
+
+    @add_fig_kwargs
+    def plot_energies(self, **kwargs):
+        """
+        Plots the energies as a function of volume at different temperatures.
+        kwargs are propagated to the analogous method of QHA.
+        """
+        self._consistency_check()
+        # Build grid of plots.
+        ax_list, fig, plt = get_axarray_fig_plt(None, nrows=self.num_qmeshes, ncols=1,
+                                                sharex=True, sharey=True, squeeze=False)
+        ax_list = ax_list.ravel()
+
+        for qha, ngqpt, ax in zip(self.qha_list, self.ngqpt_list, ax_list):
+            qha.plot_energies(ax=ax, show=False, **kwargs)
+            ax.set_title("ngpqt: %s" % str(ngqpt), fontsize=self.fontsize)
+        return fig
+
+    @add_fig_kwargs
+    def plot_thermal_expansion_coeff(self, **kwargs):
+        """
+        Plots the thermal expansion coefficient as a function of the temperature.
+        kwargs are propagated to the analogous method of QHA.
+        """
+        self._consistency_check()
+        ax, fig, plt = get_ax_fig_plt(None)
+        cmap = plt.get_cmap(self.colormap)
+        for iq, (qha, ngqpt) in enumerate(zip(self.qha_list, self.ngqpt_list)):
+            qha.plot_thermal_expansion_coeff(ax=ax,
+                                             color=cmap(float(iq) / self.num_qmeshes),
+                                             label="ngqpt: %s" % str(ngqpt), show=False, **kwargs)
+        ax.legend(loc="best", fontsize=self.fontsize, shadow=True)
+        return fig
+
+    @add_fig_kwargs
+    def plot_vol_vs_t(self, **kwargs):
+        """
+        Plot the volume as a function of the temperature.
+        kwargs are propagated to the analogous method of QHA.
+        """
+        self._consistency_check()
+        ax, fig, plt = get_ax_fig_plt(None)
+        cmap = plt.get_cmap(self.colormap)
+        for iq, (qha, ngqpt) in enumerate(zip(self.qha_list, self.ngqpt_list)):
+            qha.plot_vol_vs_t(ax=ax,
+                              color=cmap(float(iq) / self.num_qmeshes),
+                              label="ngqpt: %s" % str(ngqpt), show=False, **kwargs)
+        ax.legend(loc="best", fontsize=self.fontsize, shadow=True)
+        return fig
+
+
+class QHAQmeshAnalyzer(AbstractQmeshAnalyzer):
+
+    def __init__(self, gsr_paths, ddb_paths):
+        """
+        Creates an instance of QHA from a list of GSR files and a list of PHDOS.nc files.
+        The list should have the same size and the volumes should match.
+
+        Args:
+            gsr_paths: list of paths to GSR files.
+            phdos_paths: list of paths to PHDOS.nc files.
+        """
+        self.gsr_paths = gsr_paths
+        self.ddb_paths = ddb_paths
+
+    def run_qlist(self, nqsmall_list, **kwargs):
+        """
+        """
+        self.qha_list = []
+        self.ngqpt_list = []
+
+        ddb_list = [DdbFile(p) for p in self.ddb_paths]
+        for nqsmall in nqsmall_list:
+            phdos_paths = []
+
+            for i, ddb in enumerate(ddb_list):
+                phbst_file, phdos_file = ddb.anaget_phbst_and_phdos_files(
+                    nqsmall=nqsmall, qppa=None, ndivsm=1, line_density=None, asr=2, chneut=1, dipdip=1,
+                    dos_method="tetra", lo_to_splitting="automatic", ngqpt=None, qptbounds=None,
+                    anaddb_kwargs=None, verbose=0, spell_check=True,
+                    mpi_procs=1, workdir=None, manager=None)
+
+                phdos_paths.append(phdos_file.filepath)
+                if i == 0:
+                    # These variables added in abinit v8.11. Use nqsmall is not available.
+                    ngqpt = 3 * [nqsmall]
+                    if "qptrlatt" in phdos_file.reader.rootgrp.variables:
+                        ngqpt = np.diagonal(phdos_file.reader.read_value("qptrlatt").T)
+                        #shiftq = phdos_file.reader.read_value("shiftq")
+                    self.ngqpt_list.append(ngqpt)
+
+                phbst_file.close()
+                phdos_file.close()
+
+            qha = QHA.from_files(self.gsr_paths, phdos_paths)
+            self.qha_list.append(qha)
+
+        self.ngqpt_list = np.reshape(self.ngqpt_list, (-1, 3))
+        self.num_qmeshes = len(self.ngqpt_list)
+        for ddb in ddb_list:
+            ddb.close()

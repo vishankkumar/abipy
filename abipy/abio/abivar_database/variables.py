@@ -326,7 +326,7 @@ class Variable(object):
         self.text = my_unicode(text)
 
         errors = []
-        for a in ("abivarname", "varset", "vartype", "topics", "dimensions", "text"):
+        for a in ("abivarname", "varset", "vartype", "topics", "dimensions", "text", "added_in_version"):
             if getattr(self, a) is None:
                 errors.append("attribute %s is mandatory" % a)
         if errors:
@@ -941,8 +941,11 @@ class InputVariables(OrderedDict):
     @classmethod
     def from_pyfile(cls, filepath):
         """Initialize the object from python file."""
-        import imp
-        module = imp.load_source(filepath, filepath)
+        #import imp
+        #module = imp.load_source(filepath, filepath)
+        from importlib.machinery import SourceFileLoader
+        module = SourceFileLoader(filepath, filepath).load_module()
+
         vlist = [Variable(**d) for d in module.variables]
         new = cls()
         new.executable = module.executable

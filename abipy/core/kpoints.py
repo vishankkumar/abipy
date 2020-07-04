@@ -518,7 +518,7 @@ def as_kpoints(obj, lattice, weights=None, names=None):
         return [obj]
 
     # Iterable with K-points?
-    if isinstance(obj, collections.Iterable):
+    if isinstance(obj, collections.abc.Iterable):
         if isinstance(obj[0], Kpoint):
             assert all(isinstance(o, Kpoint) for o in obj)
             return obj
@@ -654,6 +654,20 @@ class Kpoint(SlotPickleMixin):
         if self.name is not None:
             s += " %s" % self.name
         return s
+
+    def tos(self, m="fract"):
+        """
+        Return string with fractional or cartesian coords depending
+        on mode `m` in ("fract", "cart", "fracart")
+        """
+        if m == "fract":
+            return "[%+.3f, %+.3f, %+.3f]" % tuple(self.frac_coords)
+        elif m == "cart":
+            return "(%+.3f, %+.3f, %+.3f)" % tuple(self.cart_coords)
+        elif m == "fracart":
+            return "%s, %s" % (self.tos(m="fract"), self.tos(m="cart"))
+        else:
+            raise ValueError("Invalid mode: `%s`" % str(m))
 
     def __str__(self):
         return self.to_string()
@@ -914,6 +928,18 @@ class KpointList(collections.abc.Sequence):
             return self._points.index(kpoint)
         except ValueError:
             raise ValueError("Cannot find point: %s in KpointList:\n%s" % (repr(kpoint), repr(self)))
+
+    def get_all_kindices(self, kpoint):
+        """
+        Return numpy array with indexes of all the k-point
+        Accepts: |Kpoint| instance or integer.
+        """
+        start = self.index(kpoint)
+        k0 = self[start]
+        kinds = []
+        for ik, k in enumerate(self):
+            if k == k0: kinds.append(ik)
+        return np.array(kinds)
 
     def find(self, kpoint):
         """
@@ -1224,7 +1250,7 @@ class Kpath(KpointList):
             if verbose == 0 and not tag: continue
             table.append([
                 str(i),
-                "%.5f, %.5f, %.5f" % tuple(kpoint.frac_coords),
+                "%.7f, %.7f, %.7f" % tuple(kpoint.frac_coords),
                 kpoint.name,
                 self.ds[i] if i != len(self) - 1 else None,
                 "*" if i in vids else " ",
@@ -1269,8 +1295,9 @@ class Kpath(KpointList):
 
         for i, v in enumerate(self.versors[1:]):
             i += 1
-            if v != prev:
-                #print("diff", v.frac_coords - prev.frac_coords)
+            #if v != prev:
+            if ((prev - v).norm > 1e-5):
+                #print("diff", (prev - v).norm, v.frac_coords - prev.frac_coords)
                 prev = v
                 lines[-1].append(i)
                 lines.append([i])
@@ -1642,7 +1669,8 @@ class KpointsReaderMixin(object):
         weights = self.read_kweights()
         ksampling = self.read_ksampling_info()
 
-        if ksampling.kptopt < 0:
+        #if ksampling.kptopt < 0:
+        if ksampling.kptopt < 0 or np.all(weights == 1):
             # We have a path in the BZ.
             kpath = Kpath(structure.reciprocal_lattice, frac_coords, ksampling=ksampling)
             for kpoint in kpath:
@@ -1659,9 +1687,6 @@ class KpointsReaderMixin(object):
         #if np.any(ksampling.kptrlatt_orig != 0):
         # We have a homogeneous sampling of the BZ.
         return IrredZone(structure.reciprocal_lattice, frac_coords, weights=weights, ksampling=ksampling)
-
-        #raise ValueError("Only homogeneous samplings or paths are supported!\n"
-        #                 "ksampling info:\n%s" % str(ksampling))
 
     def read_ksampling_info(self):
         """
@@ -1861,3 +1886,35 @@ def find_points_along_path(cart_bounds, cart_coords, dist_tol):
     return dict2namedtuple(ikfound=np.array(ikfound)[isort],
                            dist_list=dist_list,
                            path_ticks=np.array(path_ticks))
+
+
+def build_segments(k0_list, npts, step, red_dirs, reciprocal_lattice):
+    """
+    For each point in k0_list, build a line passing through the point for each
+    reduced direction in red_dir. Each line consists of `npts` points with step `step` in Ang-1
+    and is centered on the k-point. Return: (nk0_list, len(red_dirs) * npts, 3) array with fractional coordinates.
+
+    Args:
+        k0_list: List of k-points in reduced coordinates.
+        npts: Number of points in each segment.
+        step: Step in Ang-1
+        red_dirs: List of reduced directions
+        reciprocal_lattice: Reciprocal lattice (from structure.reciprocal_lattice)
+    """
+    k0_list = np.reshape(k0_list, (-1, 3))
+    red_dirs = np.reshape(red_dirs, (-1, 3))
+    kpts = []
+    for kpoint in k0_list:
+        kpoint = Kpoint.as_kpoint(kpoint, reciprocal_lattice)
+        # Build segments passing through this kpoint (work in Cartesian coords)
+        for rdir in red_dirs:
+            bvers = reciprocal_lattice.matrix.T @ rdir
+            #bvers = reciprocal_lattice.get_cartesian_coords(rdir)
+            bvers /= np.sqrt(np.dot(bvers, bvers))
+            kstart = kpoint.cart_coords - bvers * (npts // 2) * step
+            for ii in range(npts):
+                kpts.append(kstart + ii * step * bvers)
+
+    # Cart --> Frac
+    out = reciprocal_lattice.get_fractional_coords(kpts)
+    return np.reshape(out, (len(k0_list), len(red_dirs) * npts, 3))
