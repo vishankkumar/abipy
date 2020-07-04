@@ -16,7 +16,7 @@ class TestStructure(AbipyTest):
         """Initialize Structure from Netcdf data files"""
 
         for filename in abidata.WFK_NCFILES + abidata.GSR_NCFILES:
-            print("About to read file %s" % filename)
+            #print("About to read file %s" % filename)
             structure = Structure.from_file(filename)
             str(structure)
             structure.to_string(verbose=2)
@@ -38,6 +38,8 @@ class TestStructure(AbipyTest):
 
             if self.has_ase():
                 assert structure == Structure.from_ase_atoms(structure.to_ase_atoms())
+                if self.has_matplotlib():
+                    assert structure.plot_atoms(show=False)
 
     def test_utils(self):
         """Test utilities for the generation of Abinit inputs."""
@@ -137,8 +139,11 @@ class TestStructure(AbipyTest):
                 assert si.plot_xrd(show=False)
 
         if self.has_mayavi():
-            #assert si.vtkview(show=False)  # Disabled due to (core dumped) on travis
-            assert si.mayaview(show=False)
+            #assert si.plot_vtk(show=False)  # Disabled due to (core dumped) on travis
+            assert si.plot_mayaview(show=False)
+
+        if self.has_panel():
+            assert hasattr(si.get_panel(), "show")
 
         assert si is Structure.as_structure(si)
         assert si == Structure.as_structure(si.to_abivars())
@@ -203,13 +208,16 @@ xred       0.0000000000    0.0000000000    0.0000000000
         self.assert_equal(s2coords["Mg"], [[0, 0, 0]])
         self.assert_equal(s2coords["B"],  [[1/3, 2/3, 0.5], [2/3, 1/3, 0.5]])
 
+        new_mgb2 = mgb2.scale_lattice(mgb2.volume * 1.1)
+        self.assert_almost_equal(new_mgb2.volume, mgb2.volume * 1.1)
+        assert new_mgb2.lattice.is_hexagonal
+
         # TODO: This part should be tested more carefully
         mgb2.abi_sanitize()
         mgb2.abi_sanitize(primitive_standard=True)
         mgb2.get_conventional_standard_structure()
         assert len(mgb2.abi_string)
         assert len(mgb2.spget_summary(site_symmetry=True, verbose=10))
-        #print(structure._repr_html_())
 
         self.serialize_with_pickle(mgb2)
 
@@ -289,7 +297,7 @@ xred       0.0000000000    0.0000000000    0.0000000000
 
         #print(old_structure.lattice._matrix)
         for site in old_structure:
-            print(structure.lattice.get_cartesian_coords(site.frac_coords))
+            _ = structure.lattice.get_cartesian_coords(site.frac_coords)
 
         # TODO: Check all this stuff more carefully
         #qpoint = [0, 0, 0]

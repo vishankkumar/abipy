@@ -1,9 +1,6 @@
 language: python
 #cache: pip
 
-#dist: precise
-sudo: false
-
 env:
   global:
   - ABINIT_VERSION=8.10.1
@@ -15,20 +12,23 @@ matrix:
   include:
     - os: linux
       python: 3.6
-      env: 
+      env:
         - ABIPY_INSTALLER=pip ABIPY_PYTEST=no
     - os: linux
       python: 3.7
       dist: xenial
-      env: 
-        - ABIPY_INSTALLER=conda ABIPY_COVERALLS=yes
+      env:
+        - ABIPY_INSTALLER=pip ABIPY_COVERALLS=yes
     - os: linux
       python: 3.7
-      # https://github.com/travis-ci/travis-ci/issues/9815
-      dist: xenial
+      dist: xenial # https://github.com/travis-ci/travis-ci/issues/9815
       sudo: true
-      env: 
-        - ABIPY_INSTALLER=pip ABIPY_SPHINX=yes 
+      env:
+        - ABIPY_INSTALLER=conda ABIPY_SPHINX=yes
+#- os: linux
+#  python: 3.8
+#  env:
+#    - ABIPY_INSTALLER=conda ABIPY_PYTEST=no
 
 install:
   #- set -ev  # exit on first error, print each command
@@ -39,16 +39,8 @@ install:
       if [ "${ABIPY_INSTALLER}" == "pip" ]; then
         # pip-based installation.
         source dev_scripts/conda_get.sh  # Needed for Abinit
-        conda config --add channels conda-forge
-        echo "Installing abinit from abinit channel ..."
-        conda install -y -c abinit abinit=${ABINIT_VERSION}
-        abinit --version
-        abinit --build
-
         # We are gonna use the github version
         sed -i '/pymatgen/d' requirements.txt
-        # https://github.com/pypa/pipenv/issues/2596
-        #pipenv lock --clear
         travis_wait pip install -r requirements.txt
         travis_wait pip install -r requirements-optional.txt
         conda install -y -c conda-forge graphviz python-graphviz
@@ -79,7 +71,7 @@ install:
   #- git clone --depth=50 https://github.com/materialsproject/pymatgen.git && cd pymatgen && pip install -r requirements.txt && pip install -r requirements-optional.txt && python setup.py install && cd ../
 
   - python setup.py install
-  - mkdir -p ${HOME}/.abinit/abipy 
+  - mkdir -p ${HOME}/.abinit/abipy
   - cp abipy/data/managers/travis_scheduler.yml ${HOME}/.abinit/abipy/scheduler.yml
   - cp abipy/data/managers/travis_manager.yml ${HOME}/.abinit/abipy/manager.yml
   - ./dev_scripts/pyclean.py .
@@ -88,7 +80,7 @@ before_script:
     # This to run tests requiring a graphical user e.g. mayavi
     # https://docs.travis-ci.com/user/gui-and-headless-browsers/#Using-xvfb-to-Run-Tests-That-Require-a-GUI
     - "export DISPLAY=:99.0"
-    - if [[ "${TRAVIS_OS_NAME}" == "osx" ]]; then rvm get head || true; fi 
+    - if [[ "${TRAVIS_OS_NAME}" == "osx" ]]; then rvm get head || true; fi
 
 # command to run tests
 script: ./dev_scripts/runtests.sh
@@ -107,12 +99,3 @@ notifications:
       - gmatteo@gmail.com
     on_success: change
     on_failure: always
-
-# https://docs.travis-ci.com/user/deployment/pages/
-#deploy:
-#  provider: pages
-#  skip_cleanup: true
-#  github_token: $GITHUB_TOKEN # Set in travis-ci.org dashboard
-#  local_dir: ${TRAVIS_BUILD_DIR}/yourfolder
-#  on:
-#    branch: master

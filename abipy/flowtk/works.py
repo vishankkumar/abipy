@@ -18,16 +18,13 @@ from pydispatch import dispatcher
 from pymatgen.core.units import EnergyArray
 from . import wrappers
 from .nodes import Dependency, Node, NodeError, NodeResults, FileNode #, check_spectator
-from .tasks import (Task, AbinitTask, ScfTask, NscfTask, DfptTask, PhononTask, ElasticTask, DdkTask,
+from .tasks import (Task, AbinitTask, ScfTask, NscfTask, DfptTask, PhononTask, ElasticTask, DdkTask, EffMassTask,
                     BseTask, RelaxTask, DdeTask, BecTask, ScrTask, SigmaTask, TaskManager,
                     DteTask, EphTask, CollinearThenNonCollinearScfTask)
 
 from .utils import Directory
 from .netcdf import ETSF_Reader, NetcdfReader
 from .abitimer import AbinitTimerParser
-
-import logging
-logger = logging.getLogger(__name__)
 
 __author__ = "Matteo Giantomassi"
 __copyright__ = "Copyright 2013, The Materials Project"
@@ -56,7 +53,7 @@ class WorkResults(NodeResults):
 
     @classmethod
     def from_node(cls, work):
-        """Initialize an instance from a :class:`Work` instance."""
+        """Initialize an instance from a |Work| instance."""
         new = super().from_node(work)
 
         # Will put all files found in outdir in GridFs
@@ -72,6 +69,10 @@ class WorkError(NodeError):
 
 
 class BaseWork(Node, metaclass=abc.ABCMeta):
+    """
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: BaseWork
+    """
     Error = WorkError
 
     Results = WorkResults
@@ -160,7 +161,7 @@ class BaseWork(Node, metaclass=abc.ABCMeta):
 
         # No task found, this usually happens when we have dependencies.
         # Beware of possible deadlocks here!
-        logger.warning("Possible deadlock in fetch_task_to_run!")
+        self.history.warning("Possible deadlock in fetch_task_to_run!")
         return None
 
     def fetch_alltasks_to_run(self):
@@ -180,7 +181,7 @@ class BaseWork(Node, metaclass=abc.ABCMeta):
     def connect_signals(self):
         """
         Connect the signals within the work.
-        The :class:`Work` is responsible for catching the important signals raised from
+        The |Work| is responsible for catching the important signals raised from
         its task and raise new signals when some particular condition occurs.
         """
         for task in self:
@@ -194,7 +195,7 @@ class BaseWork(Node, metaclass=abc.ABCMeta):
             try:
                 dispatcher.disconnect(self.on_ok, signal=task.S_OK, sender=task)
             except dispatcher.errors.DispatcherKeyError as exc:
-                logger.debug(str(exc))
+                self.history.debug(str(exc))
 
     @property
     def all_ok(self):
@@ -206,7 +207,7 @@ class BaseWork(Node, metaclass=abc.ABCMeta):
         This callback is called when one task reaches status `S_OK`.
         It executes on_all_ok when all tasks in self have reached `S_OK`.
         """
-        logger.debug("in on_ok with sender %s" % sender)
+        self.history.debug("In on_ok with sender %s" % sender)
 
         if self.all_ok:
             if self.finalized:
@@ -233,15 +234,13 @@ class BaseWork(Node, metaclass=abc.ABCMeta):
     #@check_spectator
     def on_all_ok(self):
         """
-        This method is called once the `Work` is completed i.e. when all tasks
-        have reached status S_OK. Subclasses should provide their own implementation
+        This method is called once the `Work` is completed i.e. when all tasks have reached status S_OK.
+        Subclasses should provide their own implementation
 
         Returns:
             Dictionary that must contain at least the following entries:
-                returncode:
-                    0 on success.
-                message:
-                    a string that should provide a human-readable description of what has been performed.
+                returncode: 0 on success.
+                message: a string that should provide a human-readable description of what has been performed.
         """
         return dict(returncode=0, message="Calling on_all_ok of the base class!")
 
@@ -358,7 +357,7 @@ class NodeContainer(metaclass=abc.ABCMeta):
     to register tasks in the container. The helper function call the
     `register` method of the container.
     """
-    # TODO: Abstract protocol for containers
+    # Abstract protocol for containers
 
     @abc.abstractmethod
     def register_task(self, *args, **kwargs):
@@ -367,7 +366,7 @@ class NodeContainer(metaclass=abc.ABCMeta):
         """
         # TODO: shall flow.register_task return a Task or a Work?
 
-    # Helper functions
+    # Helper functions to register Task subclasses.
     def register_scf_task(self, *args, **kwargs):
         """Register a Scf task."""
         kwargs["task_class"] = ScfTask
@@ -381,7 +380,23 @@ class NodeContainer(metaclass=abc.ABCMeta):
     def register_nscf_task(self, *args, **kwargs):
         """Register a nscf task."""
         kwargs["task_class"] = NscfTask
-        return self.register_task(*args, **kwargs)
+        task = self.register_task(*args, **kwargs)
+
+        # Make sure parent producing DEN file is given
+        if task.is_work: task = task[-1]
+        den_parent = task.find_parent_with_ext("DEN")
+        if den_parent is None:
+            raise ValueError("NSCF task %s\nrequires parent producing DEN file!" % repr(task))
+
+        if task.input.get("usekden", 0) == 1:
+            # Meta-GGA calculation --> Add KDEN if not explicitly given.
+            # Assuming prtkden already set to 1
+            # TODO: Abinit should automatically set it to 1 if usekden --> I'm not gonna fix the input at this level
+            kden_parent = task.find_parent_with_ext("KDEN")
+            if kden_parent is None:
+                task.add_deps({den_parent: "KDEN"})
+
+        return task
 
     def register_relax_task(self, *args, **kwargs):
         """Register a task for structural optimization."""
@@ -399,8 +414,15 @@ class NodeContainer(metaclass=abc.ABCMeta):
         return self.register_task(*args, **kwargs)
 
     def register_ddk_task(self, *args, **kwargs):
-        """Register a ddk task."""
+        """Register a DDK task."""
         kwargs["task_class"] = DdkTask
+        return self.register_task(*args, **kwargs)
+
+    def register_effmass_task(self, *args, **kwargs):
+        """Register a effective mass task."""
+        kwargs["task_class"] = EffMassTask
+        # FIXME: Hack to run it in sequential because effmass task does not support parallelism.
+        kwargs.update({"manager": TaskManager.from_user_config().new_with_fixed_mpi_omp(1, 1)})
         return self.register_task(*args, **kwargs)
 
     def register_scr_task(self, *args, **kwargs):
@@ -436,6 +458,12 @@ class NodeContainer(metaclass=abc.ABCMeta):
     def register_eph_task(self, *args, **kwargs):
         """Register an electron-phonon task."""
         kwargs["task_class"] = EphTask
+        eph_inp = args[0]
+        seq_manager = TaskManager.from_user_config().new_with_fixed_mpi_omp(1, 1)
+        if eph_inp.get("eph_frohlichm", 0) != 0 or abs(eph_inp.get("eph_task", 0)) == 15:
+            # FIXME: Hack to run task in sequential if calculation does not support MPI with nprocs > 1.
+            kwargs.update({"manager": seq_manager})
+
         return self.register_task(*args, **kwargs)
 
     def walknset_vars(self, task_class=None, *args, **kwargs):
@@ -471,12 +499,15 @@ class NodeContainer(metaclass=abc.ABCMeta):
 class Work(BaseWork, NodeContainer):
     """
     A Work is a list of (possibly connected) tasks.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: Work
     """
     def __init__(self, workdir=None, manager=None):
         """
         Args:
             workdir: Path to the working directory.
-            manager: :class:`TaskManager` object.
+            manager: |TaskManager| object.
         """
         super().__init__()
 
@@ -489,18 +520,18 @@ class Work(BaseWork, NodeContainer):
             self.set_manager(manager)
 
     def set_manager(self, manager):
-        """Set the :class:`TaskManager` to use to launch the :class:`Task`."""
+        """Set the |TaskManager| to use to launch the |Task|."""
         self.manager = manager.deepcopy()
         for task in self:
             task.set_manager(manager)
 
     @property
     def flow(self):
-        """The flow containing this :class:`Work`."""
+        """The flow containing this |Work|."""
         return self._flow
 
     def set_flow(self, flow):
-        """Set the flow associated to this :class:`Work`."""
+        """Set the flow associated to this |Work|."""
         if not hasattr(self, "_flow"):
             self._flow = flow
         else:
@@ -509,7 +540,7 @@ class Work(BaseWork, NodeContainer):
 
     @lazy_property
     def pos(self):
-        """The position of self in the :class:`Flow`"""
+        """The position of self in the |Flow|"""
         for i, work in enumerate(self.flow):
             if self == work:
                 return i
@@ -577,7 +608,7 @@ class Work(BaseWork, NodeContainer):
 
     @property
     def all_done(self):
-        """True if all the :class:`Task` objects in the :class:`Work` are done."""
+        """True if all the |Task| objects in the |Work| are done."""
         return all(task.status >= task.S_DONE for task in self)
 
     @property
@@ -606,11 +637,11 @@ class Work(BaseWork, NodeContainer):
     def allocate(self, manager=None):
         """
         This function is called once we have completed the initialization
-        of the :class:`Work`. It sets the manager of each task (if not already done)
+        of the |Work|. It sets the manager of each task (if not already done)
         and defines the working directories of the tasks.
 
         Args:
-            manager: :class:`TaskManager` object or None
+            manager: |TaskManager| object or None
         """
         for i, task in enumerate(self):
 
@@ -636,10 +667,10 @@ class Work(BaseWork, NodeContainer):
 
     def register(self, obj, deps=None, required_files=None, manager=None, task_class=None):
         """
-        Registers a new :class:`Task` and add it to the internal list, taking into account possible dependencies.
+        Registers a new |Task| and add it to the internal list, taking into account possible dependencies.
 
         Args:
-            obj: :class:`AbinitInput` instance or `Task` object.
+            obj: |AbinitInput| instance or |Task| object.
             deps: Dictionary specifying the dependency of this node or list of dependencies
                   None means that this obj has no dependency.
             required_files: List of strings with the path of the files used by the task.
@@ -647,12 +678,11 @@ class Work(BaseWork, NodeContainer):
                 Use the standard approach based on Works, Tasks and deps
                 if the files will be produced in the future.
             manager:
-                The :class:`TaskManager` responsible for the submission of the task. If manager is None, we use
-                the `TaskManager` specified during the creation of the :class:`Work`.
+                The |TaskManager| responsible for the submission of the task. If manager is None, we use
+                the `TaskManager` specified during the creation of the |Work|.
             task_class: Task subclass to instantiate. Default: :class:`AbinitTask`
 
-        Returns:
-            :class:`Task` object
+        Returns: |Task| object
         """
         task_workdir = None
         if hasattr(self, "workdir"):
@@ -868,7 +898,12 @@ class Work(BaseWork, NodeContainer):
 
 
 class BandStructureWork(Work):
-    """Work for band structure calculations."""
+    """
+    Work for band structure calculations.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: BandStructureWork
+    """
 
     def __init__(self, scf_input, nscf_input, dos_inputs=None, workdir=None, manager=None):
         """
@@ -877,7 +912,7 @@ class BandStructureWork(Work):
             nscf_input: Input for the NSCF run defining the band structure calculation.
             dos_inputs: Input(s) for the DOS. DOS is computed only if dos_inputs is not None.
             workdir: Working directory.
-            manager: :class:`TaskManager` object.
+            manager: |TaskManager| object.
         """
         super().__init__(workdir=workdir, manager=manager)
 
@@ -899,10 +934,9 @@ class BandStructureWork(Work):
 
     def plot_ebands(self, **kwargs):
         """
-        Plot the band structure. kwargs are passed to the plot method of :class:`ElectronBands`.
+        Plot the band structure. kwargs are passed to the plot method of |ElectronBands|.
 
-        Returns:
-            `matplotlib` figure
+        Return: |matplotlib-Figure|
         """
         with self.nscf_task.open_gsr() as gsr:
             return gsr.ebands.plot(**kwargs)
@@ -918,8 +952,7 @@ class BandStructureWork(Work):
             width: Standard deviation (eV) of the gaussian.
             kwargs: Keyword arguments passed to `plot_with_edos` method to customize the plot.
 
-        Returns:
-            `matplotlib` figure.
+        Return: |matplotlib-Figure|
         """
         with self.nscf_task.open_gsr() as gsr:
             gs_ebands = gsr.ebands
@@ -942,8 +975,7 @@ class BandStructureWork(Work):
             width: Standard deviation (eV) of the gaussian.
             kwargs: Keyword arguments passed to `plot` method to customize the plot.
 
-        Returns:
-            `matplotlib` figure.
+        Return: |matplotlib-Figure|
         """
         if dos_pos is not None and not isinstance(dos_pos, (list, tuple)): dos_pos = [dos_pos]
 
@@ -965,6 +997,9 @@ class RelaxWork(Work):
     while keeping the unit cell parameters fixed. The second task uses the final
     structure to perform a structural relaxation in which both the atomic positions
     and the lattice parameters are optimized.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: RelaxWork
     """
     def __init__(self, ion_input, ioncell_input, workdir=None, manager=None, target_dilatmx=None):
         """
@@ -972,7 +1007,7 @@ class RelaxWork(Work):
             ion_input: Input for the relaxation of the ions (cell is fixed)
             ioncell_input: Input for the relaxation of the ions and the unit cell.
             workdir: Working directory.
-            manager: :class:`TaskManager` object.
+            manager: |TaskManager| object.
         """
         super().__init__(workdir=workdir, manager=manager)
 
@@ -1004,7 +1039,7 @@ class RelaxWork(Work):
         If sender == self.ion_task, we update the initial structure
         used by self.ioncell_task and we unlock it so that the job can be submitted.
         """
-        logger.debug("in on_ok with sender %s" % sender)
+        self.history.debug("In on_ok with sender %s" % sender)
 
         if sender == self.ion_task and not self.transfer_done:
             # Get the relaxed structure from ion_task
@@ -1023,16 +1058,16 @@ class RelaxWork(Work):
                 self.ioncell_task.reduce_dilatmx(target=self.target_dilatmx)
                 self.history.info('Converging dilatmx. Value reduce from {} to {}.'
                             .format(actual_dilatmx, self.ioncell_task.get_inpvar('dilatmx')))
-                self.ioncell_task.reset_from_scratch()
+                self.ioncell_task.restart()
 
         return super().on_ok(sender)
 
     def plot_ion_relaxation(self, **kwargs):
         """
         Plot the history of the ion-cell relaxation.
-        kwargs are passed to the plot method of :class:`HistFile`
+        kwargs are passed to the plot method of |HistFile|
 
-        Return `matplotlib` figure or None if hist file is not found.
+        Return: |matplotlib-Figure| or None if hist file is not found.
         """
         with self.ion_task.open_hist() as hist:
             return hist.plot(**kwargs) if hist else None
@@ -1040,9 +1075,9 @@ class RelaxWork(Work):
     def plot_ioncell_relaxation(self, **kwargs):
         """
         Plot the history of the ion-cell relaxation.
-        kwargs are passed to the plot method of :class:`HistFile`
+        kwargs are passed to the plot method of |HistFile|
 
-        Return `matplotlib` figure or None if hist file is not found.
+        Return: |matplotlib-Figure| or None if hist file is not found.
         """
         with self.ioncell_task.open_hist() as hist:
             return hist.plot(**kwargs) if hist else None
@@ -1052,6 +1087,9 @@ class G0W0Work(Work):
     """
     Work for general G0W0 calculations.
     All input can be either single inputs or lists of inputs
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: G0W0Work
     """
     def __init__(self, scf_inputs, nscf_inputs, scr_inputs, sigma_inputs,
                  workdir=None, manager=None):
@@ -1062,11 +1100,11 @@ class G0W0Work(Work):
             nscf_inputs: Input(s) for the NSCF run, if it is a list add all but only
                 link to the last (i.e. addditiona DOS and BANDS)
             scr_inputs: Input for the screening run
-            sigma_inputs: List of :class:AbinitInput`for the self-energy run.
+            sigma_inputs: List of |AbinitInput| for the self-energy run.
                 if scr and sigma are lists of the same length, every sigma gets its own screening.
                 if there is only one screening all sigma inputs are linked to this one
             workdir: Working directory of the calculation.
-            manager: :class:`TaskManager` object.
+            manager: |TaskManager| object.
         """
         super().__init__(workdir=workdir, manager=manager)
 
@@ -1114,15 +1152,18 @@ class G0W0Work(Work):
 class SigmaConvWork(Work):
     """
     Work for self-energy convergence studies.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: SigmaConvWork
     """
     def __init__(self, wfk_node, scr_node, sigma_inputs, workdir=None, manager=None):
         """
         Args:
             wfk_node: The node who has produced the WFK file or filepath pointing to the WFK file.
             scr_node: The node who has produced the SCR file or filepath pointing to the SCR file.
-            sigma_inputs: List of :class:`AbinitInput` for the self-energy runs.
+            sigma_inputs: List of |AbinitInput| for the self-energy runs.
             workdir: Working directory of the calculation.
-            manager: :class:`TaskManager` object.
+            manager: |TaskManager| object.
         """
         # Cast to node instances.
         wfk_node, scr_node = Node.as_node(wfk_node), Node.as_node(scr_node)
@@ -1142,6 +1183,9 @@ class BseMdfWork(Work):
     Work for simple BSE calculations in which the self-energy corrections
     are approximated by the scissors operator and the screening is modeled
     with the model dielectric function.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: BseMdfWork
     """
     def __init__(self, scf_input, nscf_input, bse_inputs, workdir=None, manager=None):
         """
@@ -1150,7 +1194,7 @@ class BseMdfWork(Work):
             nscf_input: Input for the NSCF run.
             bse_inputs: List of Inputs for the BSE run.
             workdir: Working directory of the calculation.
-            manager: :class:`TaskManager`.
+            manager: |TaskManager|
         """
         super().__init__(workdir=workdir, manager=manager)
 
@@ -1183,6 +1227,9 @@ class QptdmWork(Work):
     This work parallelizes the calculation of the q-points of the screening.
     It also provides the callback `on_all_ok` that calls mrgscr to merge
     all the partial screening files produced.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: QptdmWork
     """
     def create_tasks(self, wfk_file, scr_input):
         """
@@ -1215,7 +1262,6 @@ class QptdmWork(Work):
         # Parse the section with the q-points
         with NetcdfReader(fake_task.outdir.has_abiext("qptdms.nc")) as reader:
             qpoints = reader.read_value("reduced_coordinates_of_kpoints")
-        #print("qpoints)
 
         # Now we can register the task for the different q-points
         for qpoint in qpoints:
@@ -1266,18 +1312,18 @@ class QptdmWork(Work):
 
 
 class MergeDdb(object):
-    """Mixin class for Works that have to merge the DDB files produced by the tasks."""
+    """
+    Mixin class for Works that have to merge the DDB files produced by the tasks.
+    """
 
     def add_becs_from_scf_task(self, scf_task, ddk_tolerance, ph_tolerance):
         """
         Build tasks for the computation of Born effective charges and add them to the work.
 
         Args:
-            scf_task: ScfTask object.
-            ddk_tolerance: dict {"varname": value} with the tolerance used in the DDK run.
-                None to use AbiPy default.
-            ph_tolerance: dict {"varname": value} with the tolerance used in the phonon run.
-                None to use AbiPy default.
+            scf_task: |ScfTask| object.
+            ddk_tolerance: dict {"varname": value} with the tolerance used in the DDK run. None to use AbiPy default.
+            ph_tolerance: dict {"varname": value} with the tolerance used in the phonon run. None to use AbiPy default.
 
         Return: (ddk_tasks, bec_tasks)
         """
@@ -1366,8 +1412,7 @@ class MergeDdb(object):
         Args:
             delete_source: True if POT1 files should be removed after (successful) merge.
 
-        Returns:
-            path to the output DVDB file. None if not DFPT POT file is found.
+        Returns: path to the output DVDB file. None if not DFPT POT file is found.
         """
         natom = len(self[0].input.structure)
         max_pertcase = 3 * natom
@@ -1411,18 +1456,21 @@ class PhononWork(Work, MergeDdb):
     It provides the callback method (on_all_ok) that calls mrgddb (mrgdv) to merge
     all the partial DDB (POT) files produced. The two files are available in the
     output directory of the Work.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: PhononWork
     """
 
     @classmethod
     def from_scf_task(cls, scf_task, qpoints, is_ngqpt=False, tolerance=None, with_becs=False,
                       ddk_tolerance=None, manager=None):
         """
-        Construct a `PhononWork` from a :class:`ScfTask` object.
+        Construct a `PhononWork` from a |ScfTask| object.
         The input file for phonons is automatically generated from the input of the ScfTask.
         Each phonon task depends on the WFK file produced by the `scf_task`.
 
         Args:
-            scf_task: ScfTask object.
+            scf_task: |ScfTask| object.
             qpoints: q-points in reduced coordinates. Accepts single q-point, list of q-points
                 or three integers defining the q-mesh if `is_ngqpt`.
             is_ngqpt: True if `qpoints` should be interpreted as divisions instead of q-points.
@@ -1431,7 +1479,7 @@ class PhononWork(Work, MergeDdb):
             with_becs: Activate calculation of Electric field and Born effective charges.
             ddk_tolerance: dict {"varname": value} with the tolerance used in the DDK run if with_becs.
                 None to use AbiPy default.
-            manager: :class:`TaskManager` object.
+            manager: |TaskManager| object.
         """
         if not isinstance(scf_task, ScfTask):
             raise TypeError("task `%s` does not inherit from ScfTask" % scf_task)
@@ -1457,7 +1505,7 @@ class PhononWork(Work, MergeDdb):
                        with_becs=False, ddk_tolerance=None, manager=None):
         """
         Similar to `from_scf_task`, the difference is that this method requires
-        an input for SCF calculation. A new ScfTask is created and added to the Work.
+        an input for SCF calculation. A new |ScfTask| is created and added to the Work.
         This API should be used if the DDB of the GS task should be merged.
         """
         if is_ngqpt:
@@ -1485,11 +1533,10 @@ class PhononWork(Work, MergeDdb):
         """
         This method is called when all the q-points have been computed.
         Ir runs `mrgddb` in sequential on the local machine to produce
-        the final DDB file in the outdir of the `Work`.
+        the final DDB file in the outdir of the |Work|.
         """
         # Merge DDB files.
         out_ddb = self.merge_ddb_files()
-
         # Merge DVDB files.
         out_dvdb = self.merge_pot1_files()
 
@@ -1504,6 +1551,9 @@ class PhononWfkqWork(Work, MergeDdb):
     It provides the callback method (on_all_ok) that calls mrgddb (mrgdv) to merge
     all the partial DDB (POT) files produced. The two files are available in the
     output directory of the Work. The WKQ files are removed at runtime.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: PhononWfkqWork
     """
 
     @classmethod
@@ -1511,12 +1561,12 @@ class PhononWfkqWork(Work, MergeDdb):
                       with_becs=False, ddk_tolerance=None, shiftq=(0, 0, 0), is_ngqpt=True, remove_wfkq=True,
                       prepgkk=0, manager=None):
         """
-        Construct a `PhononWfkqWork` from a :class:`ScfTask` object.
+        Construct a `PhononWfkqWork` from a |ScfTask| object.
         The input files for WFQ and phonons are automatically generated from the input of the ScfTask.
         Each phonon task depends on the WFK file produced by scf_task and the associated WFQ file.
 
         Args:
-            scf_task: ScfTask object.
+            scf_task: |ScfTask| object.
             ngqpt: three integers defining the q-mesh
             with_becs: Activate calculation of Electric field and Born effective charges.
             ph_tolerance: dict {"varname": value} with the tolerance for the phonon run.
@@ -1529,7 +1579,7 @@ class PhononWfkqWork(Work, MergeDdb):
                       is an explicit list of q-points
             remove_wfkq: Remove WKQ files when the children are completed.
             prepgkk: 1 to activate computation of all 3*natom perts (debugging option).
-            manager: :class:`TaskManager` object.
+            manager: |TaskManager| object.
 
         .. note:
 
@@ -1621,7 +1671,7 @@ class PhononWfkqWork(Work, MergeDdb):
         """
         This method is called when all the q-points have been computed.
         Ir runs `mrgddb` in sequential on the local machine to produce
-        the final DDB file in the outdir of the `Work`.
+        the final DDB file in the outdir of the |Work|.
         """
         # Merge DDB files.
         out_ddb = self.merge_ddb_files()
@@ -1636,6 +1686,9 @@ class GKKPWork(Work):
     """
     This work computes electron-phonon matrix elements for all the q-points
     present in a DVDB and DDB file
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: GKKPWork
     """
     @classmethod
     def from_den_ddb_dvdb(cls, inp, den_path, ddb_path, dvdb_path, mpiprocs=1, remove_wfkq=True,
@@ -1707,7 +1760,7 @@ class GKKPWork(Work):
             if is_gamma:
                 # Create a link from WFK to WFQ on_ok
                 wfkq_task = wfk_task
-                deps = {wfk_task: ["WFK","WFQ"], ddb_file: "DDB", dvdb: "DVDB"}
+                deps = {wfk_task: ["WFK", "WFQ"], ddb_file: "DDB", dvdb: "DVDB"}
             else:
                 # Create a WFQ task
                 nscf_inp = nscf_inp.new_with_vars(kptopt=3, qpt=qpt, nqpt=1)
@@ -1717,7 +1770,7 @@ class GKKPWork(Work):
 
             # Create a EPH task
             eph_inp = inp.new_with_vars(optdriver=7, prtphdos=0, eph_task=-2, kptopt=3,
-                                        ddb_ngqpt=[1,1,1], nqpt=1, qpt=qpt)
+                                        ddb_ngqpt=[1, 1, 1], nqpt=1, qpt=qpt)
             t = new.register_eph_task(eph_inp, deps=deps, manager=tm)
             new.wfkq_task_children[wfkq_task].append(t)
 
@@ -1735,7 +1788,7 @@ class GKKPWork(Work):
         for task in phononwfkq_work:
             if isinstance(task,PhononTask):
                 # Store qpoints
-                qpt = task.input.get("qpt", [0,0,0])
+                qpt = task.input.get("qpt", [0, 0, 0])
                 qpoints.append(qpt)
                 # Store dependencies
                 qpoints_deps.append(task.deps)
@@ -1761,7 +1814,7 @@ class GKKPWork(Work):
         for qpt,qpoint_deps in zip(qpoints,qpoints_deps):
             # Create eph task
             eph_input = scf_task.input.new_with_vars(optdriver=7, prtphdos=0, eph_task=-2,
-                                                     ddb_ngqpt=[1,1,1], nqpt=1, qpt=qpt)
+                                                     ddb_ngqpt=[1, 1, 1], nqpt=1, qpt=qpt)
             deps = {ddb_file: "DDB", dvdb_file: "DVDB"}
             for dep in qpoint_deps:
                 deps[dep.node] = dep.exts[0]
@@ -1814,6 +1867,9 @@ class BecWork(Work, MergeDdb):
     This work consists of DDK tasks and phonon + electric field perturbation
     It provides the callback method (on_all_ok) that calls mrgddb to merge the
     partial DDB files produced by the work.
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: BecWork
     """
 
     @classmethod
@@ -1822,11 +1878,11 @@ class BecWork(Work, MergeDdb):
         Build tasks for the computation of Born effective charges from a ground-state task.
 
         Args:
-            scf_task: ScfTask object.
+            scf_task: |ScfTask| object.
             ddk_tolerance: tolerance used in the DDK run if with_becs. None to use AbiPy default.
             ph_tolerance: dict {"varname": value} with the tolerance used in the phonon run.
                 None to use AbiPy default.
-            manager: :class:`TaskManager` object.
+            manager: |TaskManager| object.
         """
         new = cls(manager=manager)
         new.add_becs_from_scf_task(scf_task, ddk_tolerance, ph_tolerance)
@@ -1836,7 +1892,7 @@ class BecWork(Work, MergeDdb):
         """
         This method is called when all tasks reach S_OK
         Ir runs `mrgddb` in sequential on the local machine to produce
-        the final DDB file in the outdir of the `Work`.
+        the final DDB file in the outdir of the |Work|.
         """
         # Merge DDB files.
         out_ddb = self.merge_ddb_files()
@@ -1849,6 +1905,9 @@ class DteWork(Work, MergeDdb):
 
     This work consists of DDK tasks and electric field perturbation.
     It provides the callback method (on_all_ok) that calls mrgddb to merge the partial DDB files produced
+
+    .. rubric:: Inheritance Diagram
+    .. inheritance-diagram:: DteWork
     """
     @classmethod
     def from_scf_task(cls, scf_task, ddk_tolerance=None, manager=None):
@@ -1856,9 +1915,9 @@ class DteWork(Work, MergeDdb):
         Build a DteWork from a ground-state task.
 
         Args:
-            scf_task: ScfTask object.
+            scf_task: |ScfTask| object.
             ddk_tolerance: tolerance used in the DDK run if with_becs. None to use AbiPy default.
-            manager: :class:`TaskManager` object.
+            manager: |TaskManager| object.
         """
         if not isinstance(scf_task, ScfTask):
             raise TypeError("task `%s` does not inherit from ScfTask" % scf_task)
@@ -1902,7 +1961,7 @@ class DteWork(Work, MergeDdb):
     def on_all_ok(self):
         """
         This method is called when all tasks reach S_OK
-        Ir runs `mrgddb` in sequential on the local machine to produce
+        It runs `mrgddb` in sequential on the local machine to produce
         the final DDB file in the outdir of the `Work`.
         """
         # Merge DDB files.

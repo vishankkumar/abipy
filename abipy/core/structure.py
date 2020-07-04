@@ -21,7 +21,7 @@ from monty.termcolor import cprint
 from pymatgen.core.sites import PeriodicSite
 from pymatgen.core.lattice import Lattice
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from abipy.tools.plotting import add_fig_kwargs, get_ax_fig_plt
+from abipy.tools.plotting import add_fig_kwargs, get_ax_fig_plt, get_axarray_fig_plt
 from abipy.flowtk import PseudoTable
 from abipy.core.mixins import NotebookWriter
 from abipy.core.symmetries import AbinitSpaceGroup
@@ -64,7 +64,7 @@ def mp_match_structure(obj, api_key=None, endpoint=None, final=True):
             mpids = rest.find_structure(structure)
             if mpids:
                 structures = [Structure.from_mpid(mid, final=final, api_key=api_key, endpoint=endpoint)
-                        for mid in mpids]
+                              for mid in mpids]
 
         except rest.Error as exc:
             cprint(str(exc), "red")
@@ -72,6 +72,8 @@ def mp_match_structure(obj, api_key=None, endpoint=None, final=True):
         finally:
             # Back to abipy structure
             structure = Structure.as_structure(structure)
+            structures.insert(0, structure)
+            mpids.insert(0, "this")
             return restapi.MpStructures(structures=structures, ids=mpids)
 
 
@@ -116,7 +118,7 @@ def mp_search(chemsys_formula_id, api_key=None, endpoint=None):
 
 def cod_search(formula, primitive=False):
     """
-    Connect to the COD_ database. Get a list of structures corresponding to a chemical formula
+    Connect to the COD_ database. Get list of structures corresponding to a chemical formula
 
     Args:
         formula (str): Chemical formula (e.g., Fe2O3)
@@ -224,7 +226,7 @@ class Structure(pymatgen.Structure, NotebookWriter):
             new = ncfile.read_structure(cls=cls)
             new.set_abi_spacegroup(AbinitSpaceGroup.from_ncreader(ncfile))
 
-            # Try to read indsym from file (added in 8.9.x)
+            # Try to read indsym table from file (added in 8.9.x)
             indsym = ncfile.read_value("indsym", default=None)
             if indsym is not None:
                 # Fortran --> C convention
@@ -550,13 +552,13 @@ class Structure(pymatgen.Structure, NotebookWriter):
 
     def to(self, fmt=None, filename=None, **kwargs):
         __doc__ = pymatgen.Structure.to.__doc__ + \
-            "\n Accepts also fmt='abivars' and `.abi` as Abinit input file extension"
+            "\n Accepts also fmt=`abinit` or `abivars` or `.abi` as Abinit input file extension"
 
         filename = filename or ""
         fmt = "" if fmt is None else fmt.lower()
         fname = os.path.basename(filename)
 
-        if fmt in ("abi", "abivars") or fname.endswith(".abi"):
+        if fmt in ("abi", "abivars", "abinit") or fname.endswith(".abi"):
             if filename:
                 with open(filename, "wt") as f:
                     f.write(self.abi_string)
@@ -598,6 +600,11 @@ class Structure(pymatgen.Structure, NotebookWriter):
             app(str(InputVariable(varname, value)))
 
         return("\n".join(lines))
+
+    def get_panel(self):
+        """Build panel with widgets to interact with the structure either in a notebook or in a bokeh app"""
+        from abipy.panels.structure import StructurePanel
+        return StructurePanel(self).get_panel()
 
     def get_conventional_standard_structure(self, international_monoclinic=True,
                                            symprec=1e-3, angle_tolerance=5):
@@ -705,28 +712,15 @@ class Structure(pymatgen.Structure, NotebookWriter):
         new = BVAnalyzer(**kwargs).get_oxi_state_decorated_structure(self)
         return self.__class__.as_structure(new)
 
-    def _repr_html_(self):
-        """Integration with jupyter_ notebooks."""
-        try:
-            from nbjsmol import nbjsmol_display
-            return nbjsmol_display(self.to(fmt="cif"), ext=".cif", html=True)
-        except ImportError as exc:
-            # Write warning only once.
-            cls = self.__class__
-            if not hasattr(cls, "_repr_html_num_warns"): cls._repr_html_num_warns = 0
-            if cls._repr_html_num_warns == 0:
-                cls._repr_html_num_warns += 1
-                warn(str(exc) +
-                     "\n_repr_html_ requires nbjsmol package\n."
-                     "Install it with `pip install nbjsmol.`\n"
-                     "See also https://github.com/gmatteo/nbjsmol\n"
-                     "Returning `str(self)` in HTML form.")
-            return str(self).replace("\n", "<br>")
-
     @property
     def reciprocal_lattice(self):
         """
-        Reciprocal lattice of the structure.
+        Reciprocal lattice of the structure. Note that this is the standard
+        reciprocal lattice used for solid state physics with a factor of 2 * pi
+        i.e.  a_j . b_j = 2pi delta_ij
+
+        If you are looking for the crystallographic reciprocal lattice,
+        use the reciprocal_lattice_crystallographic property.
         """
         return self._lattice.reciprocal_lattice
 
@@ -977,6 +971,7 @@ class Structure(pymatgen.Structure, NotebookWriter):
 
     @lazy_property
     def site_symmetries(self):
+        """Object with SiteSymmetries."""
         from abipy.core.site_symmetries import SiteSymmetries
         return SiteSymmetries(self)
 
@@ -1197,6 +1192,14 @@ class Structure(pymatgen.Structure, NotebookWriter):
         """
         return np.sqrt(self.dot(coords, coords, space=space, frac_coords=frac_coords))
 
+    def scale_lattice(self, new_volume):
+        """
+        Return a new |Structure| with volume new_volume by performing a
+        scaling of the lattice vectors so that length proportions and angles are preserved.
+        """
+        new_lattice = self.lattice.scale(new_volume)
+        return self.__class__(new_lattice, self.species, self.frac_coords)
+
     def get_dict4pandas(self, symprec=1e-2, angle_tolerance=5.0, with_spglib=True):
         """
         Return a :class:`OrderedDict` with the most important structural parameters:
@@ -1219,10 +1222,12 @@ class Structure(pymatgen.Structure, NotebookWriter):
         spglib_symbol, spglib_number, spglib_lattice_type = None, None, None
         if with_spglib:
             try:
-                spglib_symbol, spglib_number = self.get_space_group_info(symprec=symprec, angle_tolerance=angle_tolerance)
+                spglib_symbol, spglib_number = self.get_space_group_info(symprec=symprec,
+                                                                         angle_tolerance=angle_tolerance)
                 spglib_lattice_type = self.spget_lattice_type(symprec=symprec, angle_tolerance=angle_tolerance)
             except Exception as exc:
-                cprint("Spglib couldn't find space group symbol and number for composition %s" % str(self.composition), "red")
+                cprint("Spglib couldn't find space group symbol and number for composition: `%s`" %
+                        str(self.composition), "red")
                 print("Exception:\n", exc)
 
         # Get spacegroup number computed by Abinit if available.
@@ -1244,7 +1249,7 @@ class Structure(pymatgen.Structure, NotebookWriter):
     @add_fig_kwargs
     def plot(self, **kwargs):
         """
-        Plot structure with matplotlib. Return matplotlib Figure
+        Plot structure in 3D with matplotlib. Return matplotlib Figure
         See plot_structure for kwargs
         """
         from abipy.tools.plotting import plot_structure
@@ -1253,7 +1258,7 @@ class Structure(pymatgen.Structure, NotebookWriter):
     @add_fig_kwargs
     def plot_bz(self, ax=None, pmg_path=True, with_labels=True, **kwargs):
         """
-        Gives the plot (as a matplotlib object) of the symmetry line path in the Brillouin Zone.
+        Use matplotlib to plot the symmetry line path in the Brillouin Zone.
 
         Args:
             ax: matplotlib :class:`Axes` or None if a new figure should be created.
@@ -1357,23 +1362,22 @@ class Structure(pymatgen.Structure, NotebookWriter):
         else:
             return visu(filename)
 
-    def chemview(self, **kwargs):
+    def get_chemview(self, **kwargs): # pragma: no cover
         """
-        Visualize structure in jupyter_ notebook using chemview package.
+        Visualize structure inside the jupyter notebook using chemview package.
         """
         from pymatgen.vis.structure_chemview import quick_view
         return quick_view(self, **kwargs)
 
-    def vtkview(self, show=True, **kwargs):
+    def plot_vtk(self, show=True, **kwargs):
         """
-        Visualize structure with VTK. Requires vtk python bindings.
+        Visualize structure with VTK. Requires vVTK python bindings.
 
         Args:
             show: True to show structure immediately.
             kwargs: keyword arguments passed to :class:`StructureVis`.
 
-        Return:
-            StructureVis object.
+        Return: StructureVis object.
         """
         from pymatgen.vis.structure_vtk import StructureVis
         vis = StructureVis(**kwargs)
@@ -1381,10 +1385,108 @@ class Structure(pymatgen.Structure, NotebookWriter):
         if show: vis.show()
         return vis
 
-    def mayaview(self, figure=None, show=True, **kwargs):
-        """Visualize the crystalline structure with mayaview"""
+    def plot_mayaview(self, figure=None, show=True, **kwargs):
+        """Visualize structure with mayavi."""
         from abipy.display import mvtk
         return mvtk.plot_structure(self, figure=figure, show=show, **kwargs)
+
+    @add_fig_kwargs
+    def plot_atoms(self, rotations="default", **kwargs):
+        """
+        Plot 2d representation with matplotlib using ASE `plot_atoms` function.
+
+        Args:
+            rotations: String or List of strings.
+                Each string defines a rotation (in degrees) in the form '10x,20y,30z'
+                Note that the order of rotation matters, i.e. '50x,40z' is different from '40z,50x'.
+            kwargs: extra kwargs passed to plot_atoms ASE function.
+
+        Returns: |matplotlib-Figure|
+        """
+        atoms = self.to_ase_atoms()
+        if rotations == "default":
+            rotations = [
+                "", "90x", "90y",
+                "45x,45y", "45y,45z", "45x,45z",
+            ]
+        else:
+            rotations = list_strings(rotations)
+
+        nrows, ncols, num_plots = 1, 1, len(rotations)
+        if num_plots > 1:
+            ncols = 3
+            nrows = num_plots // ncols + num_plots % ncols
+
+        ax_list, fig, plt = get_axarray_fig_plt(None, nrows=nrows, ncols=ncols,
+                                                sharex=False, sharey=True, squeeze=False)
+
+        # don't show the last ax if num_plots is odd.
+        if num_plots % ncols != 0: ax_mat[-1, -1].axis("off")
+
+        from ase.visualize.plot import plot_atoms
+        for rotation, ax in zip(rotations, ax_list.flat):
+            plot_atoms(atoms, ax=ax, rotation=rotation, **kwargs)
+            ax.set_axis_off()
+            if rotation:
+                ax.set_title("rotation: %s" % str(rotation), fontsize=6)
+
+        return fig
+
+    def get_ngl_view(self): # pragma: no cover
+        """
+        Visualize the structure with nglview inside the jupyter notebook.
+        """
+        try:
+            import nglview as nv
+        except ImportError:
+            raise ImportError("nglview is not installed. See https://github.com/arose/nglview")
+
+        view = nv.show_pymatgen(self)
+        view.add_unitcell()
+        return view
+
+    def get_crystaltk_view(self): # pragma: no cover
+        """
+        Visualize the structure with crystal_toolkit inside the jupyter notebook.
+        """
+        try:
+            from crystal_toolkit import view
+        except ImportError:
+            raise ImportError("crystal_toolkit is not installed. See https://docs.crystaltoolkit.org/jupyter")
+
+        return view(self)
+
+    def get_jsmol_view(self, symprec=None, verbose=0, **kwargs): # pragma: no cover
+        """
+        Visualize the structure with jsmol inside the jupyter notebook.
+
+        Args:
+            symprec (float): If not none, finds the symmetry of the structure
+                and writes the CIF with symmetry information.
+                Passes symprec to the spglib SpacegroupAnalyzer.
+            verbose: Verbosity level.
+        """
+        try:
+          from jupyter_jsmol import JsmolView
+        except ImportError:
+            raise ImportError("jupyter_jsmol is not installed. See https://github.com/fekad/jupyter-jsmol")
+
+        from pymatgen.io.cif import CifWriter
+        data = str(CifWriter(self, symprec=symprec))
+
+        from IPython.display import display, HTML
+        # FIXME TEMPORARY HACK TO LOAD JSMOL.js
+        # See discussion at
+        #   https://stackoverflow.com/questions/16852885/ipython-adding-javascript-scripts-to-ipython-notebook
+        display(HTML('<script type="text/javascript" src="/nbextensions/jupyter-jsmol/jsmol/JSmol.min.js"></script>'))
+
+        jsmol = JsmolView(color='white')
+        display(jsmol)
+        cmd = 'load inline "%s" {1 1 1}' % data
+        if verbose: print("executing cmd:", cmd)
+        jsmol.script(cmd)
+
+        return jsmol
 
     def visualize(self, appname="vesta"):
         """
@@ -1392,8 +1494,8 @@ class Structure(pymatgen.Structure, NotebookWriter):
         See |Visualizer| for the list of applications and formats supported.
         """
         if appname in ("mpl", "matplotlib"): return self.plot()
-        if appname == "vtk": return self.vtkview()
-        if appname == "mayavi": return self.mayaview()
+        if appname == "vtk": return self.plot_vtk()
+        if appname == "mayavi": return self.plot_mayaview()
 
         # Get the Visualizer subclass from the string.
         visu = Visualizer.from_name(appname)
@@ -1405,7 +1507,7 @@ class Structure(pymatgen.Structure, NotebookWriter):
             try:
                 return self.export(ext, visu=visu)()
             except visu.Error as exc:
-                print(exc)
+                cprint(str(exc), color="red")
                 pass
         else:
             raise visu.Error("Don't know how to export data for %s" % appname)
@@ -1427,10 +1529,15 @@ class Structure(pymatgen.Structure, NotebookWriter):
         elif fmt in ("wannier90", "w90"):
             from abipy.wannier90.win import structure2wannier90
             return structure2wannier90(self)
+        elif fmt.lower() == "poscar":
+            # Don't call super for poscar because we need more significant_figures to
+            # avoid problems with abinit space group routines where the default numerical tolerance is tight.
+            from pymatgen.io.vasp import Poscar
+            return Poscar(self).get_string(significant_figures=12)
         else:
             return super().to(fmt=fmt, **kwargs)
 
-    #def max_overlap_and_sites(self, pseudos):
+    #def get_max_overlap_and_sites(self, pseudos):
     #    # For each site in self:
     #    # 1) Get the radius of the pseudopotential sphere
     #    # 2) Get the neighbors of the site (considering the periodic images).
@@ -1603,8 +1710,7 @@ class Structure(pymatgen.Structure, NotebookWriter):
         arange = range_vec(0)[:, None] * np.array([1, 0, 0])[None, :]
         brange = range_vec(1)[:, None] * np.array([0, 1, 0])[None, :]
         crange = range_vec(2)[:, None] * np.array([0, 0, 1])[None, :]
-        all_points = arange[:, None, None] + brange[None, :, None] +\
-            crange[None, None, :]
+        all_points = arange[:, None, None] + brange[None, :, None] + crange[None, None, :]
         all_points = all_points.reshape((-1, 3))
 
         # find the translation vectors (in terms of the initial lattice vectors)
@@ -1623,7 +1729,7 @@ class Structure(pymatgen.Structure, NotebookWriter):
     def write_vib_file(self, xyz_file, qpoint, displ, do_real=True, frac_coords=True,
                        scale_matrix=None, max_supercell=None):
         """
-        write into the file descriptor xyz_file the positions and displacements of the atoms
+        Write into the file descriptor xyz_file the positions and displacements of the atoms
 
         Args:
             xyz_file: file_descriptor
@@ -1698,7 +1804,7 @@ class Structure(pymatgen.Structure, NotebookWriter):
 
         if scale_matrix is None:
             if max_supercell is None:
-                raise ValueError("If scale_matrix is not provided, please provide max_supercell !")
+                raise ValueError("scale_matrix is not provided, please provide max_supercell!")
 
             scale_matrix = self.get_smallest_supercell(qpoint, max_supercell=max_supercell)
 
@@ -1717,8 +1823,8 @@ class Structure(pymatgen.Structure, NotebookWriter):
         else:
             displ1 = np.array(displ1)
             displ2 = np.array(displ2)
-        # from here displ are in cartesian coordinates
 
+        # from here on displ are in cartesian coordinates
         norm_factor = np.linalg.norm(displ1+displ2, axis=1).max()
 
         displ1 = eta * displ1 / norm_factor
@@ -1824,8 +1930,9 @@ class Structure(pymatgen.Structure, NotebookWriter):
         if fmt in ("abinit", "abivars"):
             app("# Abinit Structure")
             app(self.convert(fmt=fmt))
+            app("\n# tolwfr 1e-20 iscf -2 # NSCF run")
+            app('# To read previous DEN file, use: getden -1 or specify filename via getden_path "out_DEN"')
             app("\n# K-path in reduced coordinates:")
-            app("# tolwfr 1e-20 iscf -2 getden ??")
             app(" ndivsm %d" % line_density)
             app(" kptopt %d" % -(len(self.hsym_kpoints) - 1))
             app(" kptbounds")
@@ -2036,13 +2143,17 @@ class Structure(pymatgen.Structure, NotebookWriter):
             nbv.new_code_cell("print(structure)"),
             nbv.new_code_cell("print(structure.abi_string)"),
             nbv.new_code_cell("structure"),
-            nbv.new_code_cell("print(structure.spglib_summary())"),
+            nbv.new_code_cell("print(structure.spget_summary())"),
             nbv.new_code_cell("if structure.abi_spacegroup is not None: print(structure.abi_spacegroup)"),
             nbv.new_code_cell("print(structure.hsym_kpoints)"),
             nbv.new_code_cell("structure.plot_bz();"),
-            nbv.new_code_cell("structure.plot_xrd();"),
+            nbv.new_code_cell("#import panel as pn; pn.extension()\n#structure.get_panel()"),
             nbv.new_code_cell("# sanitized = structure.abi_sanitize(); print(sanitized)"),
             nbv.new_code_cell("# ase_atoms = structure.to_ase_atoms()"),
+            nbv.new_code_cell("# structure.plot_atoms();"),
+            nbv.new_code_cell("# jsmol_view = structure.get_jsmol_view(); jsmol_view"),
+            nbv.new_code_cell("# ngl_view = structure.get_ngl_view(); ngl_view"),
+            nbv.new_code_cell("# ctk_view = structure.get_crystaltk_view(); ctk_view"),
         ])
 
         return self._write_nb_nbpath(nb, nbpath)

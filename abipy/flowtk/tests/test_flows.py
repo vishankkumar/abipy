@@ -11,8 +11,10 @@ from abipy.flowtk.launcher import BatchLauncher
 from abipy.flowtk.flows import *
 from abipy.flowtk.works import *
 from abipy.flowtk.tasks import *
-
 from abipy.core.testing import AbipyTest
+from abipy import abilab
+from abipy import flowtk
+
 
 class FakeAbinitInput(object):
     """Emulate an Abinit input."""
@@ -81,7 +83,7 @@ batch_adapter: *batch
 """
     def setUp(self):
         """Initialization phase."""
-        super(FlowUnitTest, self).setUp()
+        super().setUp()
 
         # Temporary directory for the flow.
         self.workdir = tempfile.mkdtemp()
@@ -101,7 +103,7 @@ class FlowTest(FlowUnitTest):
 
     def test_base(self):
         """Testing Flow..."""
-        aequal, atrue, afalse = self.assertEqual, self.assertTrue, self.assertFalse
+        aequal = self.assertEqual
         flow = Flow(workdir=self.workdir, manager=self.manager)
         assert flow.isinstance(Flow)
         assert not flow.isinstance(None)
@@ -109,24 +111,24 @@ class FlowTest(FlowUnitTest):
 
         # Build a work with a task
         work = flow.register_task(self.fake_input)
-        atrue(work.is_work)
-        atrue(len(work.color_hex) == 7)
-        atrue(work.color_hex.startswith("#"))
+        assert work.is_work
+        assert len(work.color_hex) == 7
+        assert work.color_hex.startswith("#")
         task0_w0 = work[0]
-        atrue(task0_w0.is_task)
-        print(task0_w0.status.colored)
-        atrue(len(flow) == 1)
-        aequal(flow.num_tasks, 1)
-        atrue(flow.has_db)
+        assert task0_w0.is_task
+        str(task0_w0.status.colored)
+        assert len(flow) == 1
+        assert flow.num_tasks == 1
+        assert flow.has_db
 
         #print(task0_w0.input_structure)
-        print(task0_w0.make_input)
+        str(task0_w0.make_input)
 
         # Task history
         assert len(task0_w0.history) == 0
         task0_w0.history.info("Hello %s", "world")
         assert len(task0_w0.history) == 1
-        print(task0_w0.history)
+        str(task0_w0.history)
         record = task0_w0.history.pop()
         print(record, repr(record))
         assert record.get_message(asctime=False) == "Hello world"
@@ -138,38 +140,41 @@ class FlowTest(FlowUnitTest):
 
         # Build a workflow containing two tasks depending on task0_w0
         work = Work()
-        atrue(work.is_work)
+        assert work.is_work
         work.register(self.fake_input)
         work.register(self.fake_input)
-        aequal(len(work), 2)
+        assert len(work) == 2
 
         flow.register_work(work, deps={task0_w0: "WFK"})
-        atrue(flow.is_flow)
-        aequal(len(flow), 2)
+        assert flow.is_flow
+        assert len(flow) == 2
 
         # Add another work without dependencies.
         task0_w2 = flow.register_task(self.fake_input)[0]
-        atrue(len(flow) == 3)
-        afalse(flow.is_work)
+        assert len(flow) == 3
+        assert not flow.is_work
 
         # Allocate internal tables
         flow.allocate()
 
         # Check dependecies.
-        atrue(flow[1].depends_on(task0_w0))
-        atrue(flow[1][0].depends_on(task0_w0))
-        atrue(flow[1][0] in task0_w0.get_children())
-        atrue(task0_w0 in flow[1][0].get_parents())
-        afalse(flow[2][0].depends_on(task0_w0))
-        afalse(flow[2][0] in task0_w0.get_children())
-        afalse(task0_w0 in flow[2][0].get_parents())
-        aequal(flow[1].pos, 1)
-        aequal(flow[1][0].pos, (1, 0))
-        aequal(flow[2][0].pos, (2, 0))
+        #task0_w1 = flow[1][0]
+        assert flow[1].depends_on(task0_w0)
+        assert flow[1][0].depends_on(task0_w0)
+        assert flow[1][0] in task0_w0.get_children()
+        assert task0_w0 in flow[1][0].get_parents()
+        assert flow[1][0].find_parent_with_ext("WFK") == task0_w0
+        assert flow[1][0].find_parent_with_ext("FOOBAR") is None
+        assert not flow[2][0].depends_on(task0_w0)
+        assert not flow[2][0] in task0_w0.get_children()
+        assert not task0_w0 in flow[2][0].get_parents()
+        assert flow[1].pos == 1
+        assert flow[1][0].pos == (1, 0)
+        assert flow[2][0].pos == (2, 0)
 
-        afalse(flow.all_ok)
-        aequal(flow.num_tasks, 4)
-        aequal(flow.ncores_used, 0)
+        assert not flow.all_ok
+        assert flow.num_tasks == 4
+        assert flow.ncores_used == 0
 
         # API for iterations
         aequal(len(list(flow.iflat_tasks(status="Initialized"))), sum(len(work) for work in flow))
@@ -188,7 +193,7 @@ class FlowTest(FlowUnitTest):
 
         # Find the pickle file in workdir and recreate the flow.
         same_flow = Flow.pickle_load(self.workdir)
-        aequal(same_flow, flow)
+        assert same_flow == flow
 
         # to/from string
         # FIXME This does not work with py3k
@@ -204,12 +209,37 @@ class FlowTest(FlowUnitTest):
         flow.show_inputs(varnames="znucl")
 
         df_vars = flow.get_vars_dataframe("ecut", "acell")
-        atrue("ecut" in df_vars)
+        assert "ecut" in df_vars
 
         # Test show_status
         flow.show_status()
         flow.show_tricky_tasks()
         flow.show_event_handlers()
+
+        df = flow.compare_abivars(varnames=["ecut", "natom"], printout=True, with_colors=True)
+        assert "ecut" in df
+
+        dfs = flow.compare_structures(with_spglib=False, verbose=2, printout=True, with_colors=True)
+        assert "alpha" in dfs.lattice
+
+        dfs, ebands_plotter = flow.compare_ebands(verbose=0)
+        assert not dfs and not ebands_plotter
+
+        dfs, hist_plotter = flow.compare_hist(with_spglib=False, verbose=2, printout=True, with_colors=True)
+        assert not dfs and not hist_plotter
+
+        if self.has_networkx():
+            assert flow.plot_networkx(mode="network", with_edge_labels=False, arrows=False,
+                      node_size="num_cores", node_label="name_class", layout_type="spring", show=False)
+            assert flow.plot_networkx(mode="status", with_edge_labels=True, arrows=True,
+                      node_size="num_cores", node_label="name_class", layout_type="spring", show=False)
+
+        if self.has_python_graphviz():
+            assert flow.get_graphviz(engine="automatic", graph_attr=None, node_attr=None, edge_attr=None)
+            assert flow.graphviz_imshow(ax=None, figsize=None, dpi=300, fmt="png", show=False)
+
+        if self.has_panel():
+            assert hasattr(flow.get_panel(), "show")
 
     def test_workdir(self):
         """Testing if one can use workdir=None in flow.__init__ and then flow.allocate(workdir)."""
@@ -226,15 +256,57 @@ class FlowTest(FlowUnitTest):
         tmpdir = tempfile.mkdtemp()
         flow.allocate(workdir=tmpdir)
 
-        print(flow)
+        str(flow)
         assert len(flow) == 2
-
         flow.build()
 
         for i, work in enumerate(flow):
             assert work.workdir == os.path.join(tmpdir, "w%d" % i)
             for t, task in enumerate(work):
                 assert task.workdir == os.path.join(work.workdir, "t%d" % t)
+
+    def test_nscf_flow_with_append(self):
+        """Test creation of NSCF tasks from flow with append = True"""
+
+        def make_scf_nscf_inputs():
+            """Build ands return the input files for the GS-SCF and the GS-NSCF tasks."""
+
+            multi = abilab.MultiDataset(structure=abidata.cif_file("si.cif"),
+                                        pseudos=abidata.pseudos("14si.pspnc"), ndtset=2)
+
+            # Set global variables (dataset1 and dataset2)
+            multi.set_vars(ecut=6, nband=8)
+
+            # Dataset 1 (GS-SCF run)
+            multi[0].set_kmesh(ngkpt=[8, 8, 8], shiftk=[0, 0, 0])
+            multi[0].set_vars(tolvrs=1e-6)
+
+            # Dataset 2 (GS-NSCF run on a k-path)
+            kptbounds = [
+                [0.5, 0.0, 0.0], # L point
+                [0.0, 0.0, 0.0], # Gamma point
+                [0.0, 0.5, 0.5], # X point
+            ]
+
+            multi[1].set_kpath(ndivsm=6, kptbounds=kptbounds)
+            multi[1].set_vars(tolwfr=1e-12)
+
+            # Return two input files for the GS and the NSCF run
+            scf_input, nscf_input = multi.split_datasets()
+            return scf_input, nscf_input
+
+        scf_input, nscf_input = make_scf_nscf_inputs()
+        hello_flow = flowtk.Flow(workdir=self.mkdtemp())
+        hello_flow.register_scf_task(scf_input, append=True)
+        hello_flow.register_nscf_task(nscf_input, deps={hello_flow[0][0]: "DEN"}, append=True)
+
+        #flow[0].get_graphviz_dirtree()
+        #abilab.print_doc(flowtk.PhononWork)
+
+        hello_flow = flowtk.Flow(workdir=self.mkdtemp())
+        hello_flow.register_scf_task(scf_input, append=True)
+        hello_flow.register_nscf_task(nscf_input, deps={hello_flow[0][0]: "DEN"}, append=False)
+
 
 
 class TestFlowInSpectatorMode(FlowUnitTest):
@@ -315,10 +387,9 @@ class TestBatchLauncher(FlowUnitTest):
 
             return flow
 
-
         tmpdir = tempfile.mkdtemp()
         batch = BatchLauncher(workdir=tmpdir, manager=manager)
-        print(batch)
+        str(batch)
 
         flow0 = build_flow_with_name("flow0")
         flow1 = build_flow_with_name("flow1")

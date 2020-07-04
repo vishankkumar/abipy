@@ -14,6 +14,8 @@ from abipy import abilab
 
 script_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
+test_files_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "test_files"))
+
 
 def test_if_all_scripts_are_tested():
     """Testing if all scripts are tested"""
@@ -121,6 +123,10 @@ class TestAbiopen(ScriptTest):
             path = abidata.ref_file(f)
             r = env.run(self.script, path, "-p", self.loglevel, self.verbose, expect_stderr=self.expect_stderr)
 
+        # Test abiopen with json file
+        json_path = os.path.join(test_files_dir, "nscf_input.json")
+        r = env.run(self.script, json_path, "-e", self.loglevel, self.verbose, expect_stderr=self.expect_stderr)
+
 
 class TestAbistruct(ScriptTest):
     script = os.path.join(script_dir, "abistruct.py")
@@ -138,6 +144,9 @@ class TestAbistruct(ScriptTest):
         r = env.run(self.script, "abispg", ncfile, "-t 1e-6", self.loglevel, self.verbose,
                     expect_stderr=self.expect_stderr)
 
+        r = env.run(self.script, "primitive", ncfile, self.loglevel, self.verbose,
+                    expect_stderr=self.expect_stderr)
+
     def test_convert(self):
         """Testing abistruct convert"""
         ncfile = abidata.ref_file("tgw1_9o_DS4_SIGRES.nc")
@@ -152,6 +161,8 @@ class TestAbistruct(ScriptTest):
         env = self.get_env()
         r = env.run(self.script, "supercell", cif_file, "-s 2", "-f", "abivars", self.loglevel, self.verbose,
                     expect_stderr=self.expect_stderr)
+
+        r = env.run(self.script, "print", cif_file, self.loglevel, self.verbose, expect_stderr=self.expect_stderr)
 
     def test_kpath(self):
         """Testing abistruct kpath"""
@@ -216,6 +227,7 @@ class TestAbistruct(ScriptTest):
 
     def test_cod_api(self):
         """Testing abistruct COD methods."""
+        self.skip_if_not_executable("mysql")
         env = self.get_env()
         r = env.run(self.script, "cod_id", "1526507", "--primitive",
                     self.loglevel, self.verbose, expect_stderr=self.expect_stderr)

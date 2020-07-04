@@ -155,12 +155,12 @@ class Dependency(object):
 
     @property
     def node(self):
-        """The :class:`Node` associated to the dependency."""
+        """The |Node| associated to the dependency."""
         return self._node
 
     @property
     def status(self):
-        """The status of the dependency, i.e. the status of the :class:`Node`."""
+        """The status of the dependency, i.e. the status of the |Node|."""
         return self.node.status
 
     @lazy_property
@@ -198,7 +198,7 @@ class Dependency(object):
     def connecting_vars(self):
         """
         Returns a dictionary with the variables that must be added to the
-        input file in order to connect this :class:`Node` to its dependencies.
+        input file in order to connect this |Node| to its dependencies.
         """
         vars = {}
         for prod in self.products:
@@ -226,7 +226,7 @@ class Product(object):
             path: (asbolute) filepath
         """
         if ext not in abi_extensions():
-            raise ValueError("Extension %s has not been registered in the internal database" % str(ext))
+            raise ValueError("Extension `%s` has not been registered in the internal database" % str(ext))
 
         self.ext = ext
         self.file = File(path)
@@ -267,7 +267,7 @@ class GridFsFile(AttrDict):
 
 
 class NodeResults(dict, MSONable):
-    """Dictionary used to store the most important results produced by a :class:`Node`."""
+    """Dictionary used to store the most important results produced by a |Node|."""
     JSON_SCHEMA = {
         "type": "object",
         "properties": {
@@ -416,7 +416,7 @@ class NodeResults(dict, MSONable):
 
 def check_spectator(node_method):
     """
-    Decorator for :class:`Node` methods. Raise `SpectatorNodeError`.
+    Decorator for |Node| methods. Raise `SpectatorNodeError`.
     """
     from functools import wraps
     @wraps(node_method)
@@ -433,12 +433,12 @@ def check_spectator(node_method):
 
 
 class NodeError(Exception):
-    """Base Exception raised by :class:`Node` subclasses"""
+    """Base Exception raised by |Node| subclasses"""
 
 
 class SpectatorNodeError(NodeError):
     """
-    Exception raised by :class:`Node` methods when the node is in spectator mode
+    Exception raised by |Node| methods when the node is in spectator mode
     and we are calling a method with side effects.
     """
 
@@ -693,14 +693,14 @@ class Node(metaclass=abc.ABCMeta):
     def deps(self):
         """
         List of :class:`Dependency` objects defining the dependencies
-        of this `Node`. Empty list if this :class:`Node` does not have dependencies.
+        of this `Node`. Empty list if this |Node| does not have dependencies.
         """
         return self._deps
 
     @check_spectator
     def add_deps(self, deps):
         """
-        Add a list of dependencies to the :class:`Node`.
+        Add a list of dependencies to the |Node|.
 
         Args:
             deps: List of :class:`Dependency` objects specifying the dependencies of the node.
@@ -716,23 +716,37 @@ class Node(metaclass=abc.ABCMeta):
 
         assert all(isinstance(d, Dependency) for d in deps)
 
-        # Add the dependencies to the node
+        # Add the dependencies to the node and merge possibly duplicated keys.
         self._deps.extend(deps)
+        self.merge_deps()
 
         if self.is_work:
             # The task in the work should inherit the same dependency.
             for task in self:
                 task.add_deps(deps)
+                task.merge_deps()
 
         # If we have a FileNode as dependency, add self to its children
         # Node.get_parents will use this list if node.is_isfile.
         for dep in (d for d in deps if d.node.is_file):
             dep.node.add_filechild(self)
 
+    def merge_deps(self):
+        """
+        Group all extensions associated to the same node in a single list.
+        Useful for cases in which we may end up with the same node appearing more than once
+        in self.deps. See e.g. ``add_deps``.
+        """
+        from collections import defaultdict
+        node2exts = defaultdict(list)
+        for dep in self.deps:
+            node2exts[dep.node].extend(dep.exts)
+        self._deps = [Dependency(node, exts) for node, exts in node2exts.items()]
+
     @check_spectator
     def remove_deps(self, deps):
         """
-        Remove a list of dependencies from the :class:`Node`.
+        Remove a list of dependencies from the |Node|.
 
         Args:
             deps: List of :class:`Dependency` objects specifying the  dependencies of the node.
@@ -761,19 +775,30 @@ class Node(metaclass=abc.ABCMeta):
         """True if this node depends on the other node."""
         return other in [d.node for d in self.deps]
 
+    def find_parent_with_ext(self, ext):
+        """
+        Return the parent (usually a |Task|) that produces the file with extension `ext`.
+        Raises ValueError if multiple parents are found.
+        Return None if no parent is found.
+        """
+        parent, count = None, 0
+        for dep in self.deps:
+            if ext in dep.exts:
+                parent = dep.node
+                count += 1
+
+        if count > 1:
+            raise ValueError("Cannot have multiple parents producing the same file extension!\n%s" % self.str_deps())
+
+        return parent
+
     def get_parents(self):
-        """Return the list of nodes in the :class:`Flow` required by this :class:`Node`"""
+        """Return the list of nodes in the |Flow| required by this |Node|"""
         return [d.node for d in self.deps]
-        #parents = []
-        #for work in self.flow:
-        #    if self.depends_on(work): parents.append(work)
-        #    for task in work:
-        #        if self.depends_on(task): parents.append(task)
-        #return parents
 
     def get_children(self):
         """
-        Return the list of nodes in the :class:`Flow` that depends on this :class:`Node`
+        Return the list of nodes in the |Flow| that depends on this |Node|
 
         .. note::
 
@@ -934,7 +959,7 @@ class Node(metaclass=abc.ABCMeta):
         possible to not have all receivers called if a raises an error.
         """
         if self.in_spectator_mode: return None
-        logger.debug("Node %s broadcasts signal %s" % (self, signal))
+        self.history.debug("Node %s broadcasts signal %s" % (self, signal))
         dispatcher.send(signal=signal, sender=self)
 
     ##########################
@@ -955,7 +980,7 @@ class FileNode(Node):
     """
     A Node that consists of a file. May be not yet existing
 
-    Mainly used to connect :class:`Task` objects to external files produced in previous runs.
+    Mainly used to connect |Task| objects to external files produced in previous runs.
     """
     color_rgb = np.array((102, 51, 255)) / 255
 
@@ -1033,7 +1058,6 @@ File type does not match the abinit file extension.
 Caller asked for abiext: `%s` whereas filepath: `%s`.
 Continuing anyway assuming that the netcdf file provides the API/dims/vars neeeded by the caller.
 """ % (abiext, self.filepath)
-            logger.warning(msg)
             self.history.warning(msg)
 
         #try to find file in the same path
@@ -1197,6 +1221,10 @@ class NodeHistory(collections.deque):
         """Log 'msg % args' with the critical severity level"""
         self._log("CRITICAL", msg, args, kwargs)
 
+    def debug(self, msg, *args, **kwargs):
+        """Log 'msg % args' with the critical severity level"""
+        self._log("DEBUG", msg, args, kwargs)
+
     def _log(self, level, msg, args, exc_info=None, extra=None):
         """Low-level logging routine which creates a :class:`HistoryRecord`."""
         if exc_info and not isinstance(exc_info, tuple):
@@ -1255,7 +1283,7 @@ def init_counter():
 
 def get_newnode_id():
     """
-    Returns a new node identifier used for :class:`Task`, :class:`Work` and :class:`Flow` objects.
+    Returns a new node identifier used for |Task|, |Work| and |Flow| objects.
 
     .. warning:
 

@@ -1,6 +1,7 @@
 """Integration tests for structural relaxations."""
 
 import numpy as np
+import pytest
 import abipy.data as abidata
 import abipy.abilab as abilab
 import abipy.flowtk as flowtk
@@ -83,7 +84,9 @@ def itest_atomic_relaxation(fwp, tvars):
 
     flow.show_status()
     assert all(work.finalized for work in flow)
-    assert flow.all_ok
+    if not flow.all_ok:
+        flow.debug()
+        raise RuntimeError()
 
     # post-processing tools
     if has_matplotlib():
@@ -166,7 +169,9 @@ def itest_relaxation_with_restart_from_den(fwp, tvars):
     flow.show_status()
 
     assert all(work.finalized for work in flow)
-    assert flow.all_ok
+    if not flow.all_ok:
+        flow.debug()
+        raise RuntimeError()
 
     # we should have (0, 1) restarts and no WFK file in outdir.
     for i, task in enumerate(relax_work):
@@ -186,6 +191,7 @@ def itest_dilatmx_error_handler(fwp, tvars):
     """
     Test cell relaxation with automatic restart in the presence of dilatmx error.
     """
+    pytest.xfail("dilatmxerror_handler is not portable and it's been disabled!")
     # Build the flow
     flow = flowtk.Flow(fwp.workdir, manager=fwp.manager)
 
@@ -201,7 +207,9 @@ def itest_dilatmx_error_handler(fwp, tvars):
     flow.show_status()
 
     assert all(work.finalized for work in flow)
-    assert flow.all_ok
+    if not flow.all_ok:
+        flow.debug()
+        raise RuntimeError()
 
     # t0 should have reached S_OK, and we should have DilatmxError in the corrections.
     t0 = work[0]
@@ -227,7 +235,9 @@ def itest_relaxation_with_target_dilatmx(fwp, tvars):
     flow.show_status()
 
     assert all(work.finalized for work in flow)
-    assert flow.all_ok
+    if not flow.all_ok:
+        flow.debug()
+        raise RuntimeError()
     #assert relax_work.last_dilatmx <= target_dilatmx
 
     # we should have (0, 1) restarts
@@ -237,5 +247,10 @@ def itest_relaxation_with_target_dilatmx(fwp, tvars):
         assert task.num_corrections == 0
 
     assert relax_work[1].input["dilatmx"] == 1.03
+
+    # check that when decreasing the dilatmx it actually takes the previously relaxed
+    # structure and does not start from scratch again: the lattice should not be the same.
+    assert not np.allclose(relax_work.ion_task.get_final_structure().lattice_vectors(),
+                           relax_work.ioncell_task.input.structure.lattice_vectors())
 
     flow.rmtree()

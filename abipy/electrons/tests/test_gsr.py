@@ -133,6 +133,9 @@ class GSRFileTestCase(AbipyTest):
             if self.has_nbformat():
                 gsr.write_notebook(nbpath=self.get_tmpname(text=True))
 
+            if self.has_panel():
+                assert hasattr(gsr.get_panel(), "show")
+
 
 class GsrRobotTest(AbipyTest):
 
@@ -197,6 +200,9 @@ class GsrRobotTest(AbipyTest):
             assert robot.plot_egaps(show=False)
             assert robot.plot_egaps(sortby="nkpt", hue="tsmear")
             assert robot.gridplot_with_hue("structure.formula", show=False)
+
+        if self.has_panel():
+            assert hasattr(robot.get_panel(), "show")
 
 	# Get pandas dataframe.
         df = robot.get_dataframe()

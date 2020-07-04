@@ -22,22 +22,6 @@ from abipy.iotools.xsf import xsf_write_structure
 from abipy.abio import factories
 
 
-#def remove_equivalent_atoms(structure):
-#    from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-#    spgan = SpacegroupAnalyzer(structure) #, symprec=symprec, angle_tolerance=angle_tolerance)
-#    spgdata = spgan.get_symmetry_dataset()
-#    equivalent_atoms = spgdata["equivalent_atoms"]
-#    mask = np.zeros(len(structure), dtype=np.int)
-#    for pos, eqpos in enumerate(equivalent_atoms):
-#        mask[eqpos] += 1
-#
-#    indices = [i for i, m in enumerate(mask) if m == 0]
-#    new = structure.copy()
-#    new.remove_sites(indices)
-#    with open("foo.abi", "wt") as fh:
-#        fh.write(new.abi_string)
-
-
 def save_structure(structure, options):
     """Save structure to file."""
     if not options.savefile: return
@@ -70,6 +54,7 @@ Usage example:
 
   abistruct.py spglib FILE                 => Read structure from FILE and analyze it with spglib.
   abistruct.py abispg FILE                 => Read structure from FILE, and compute ABINIT space group.
+  abistruct.py primitive FILE              => Read structure from FILE, use pymatgen and spglib to find primitive structure.
   abistruct.py abisanitize FILE            => Read structure from FILE, call abisanitize, compare structures
                                               and save "abisanitized" structure to file.
   abistruct.py conventional FILE           => Read structure from FILE, generate conventional structure
@@ -124,6 +109,8 @@ Usage example:
                                               Supports also ovito, xcrysden, vtk, mayavi, matplotlib See --help
   abistruct.py ipython FILE                => Read structure from FILE and open it in the Ipython terminal.
   abistruct.py notebook FILE               => Read structure from FILE and generate jupyter notebook.
+  abistruct.py panel FILE                  => Generate GUI in web browser to interact with the structure
+                                              Requires panel package.
 
 ###########
 # Databases
@@ -161,6 +148,12 @@ def get_parser(with_epilog=False):
     # Parent parser for commands supporting (jupyter notebooks)
     nb_parser = argparse.ArgumentParser(add_help=False)
     nb_parser.add_argument('-nb', '--notebook', default=False, action="store_true", help='Generate jupyter notebook.')
+    nb_parser.add_argument('--classic-notebook', action='store_true', default=False,
+                           help="Use classic notebook instead of jupyterlab.")
+    nb_parser.add_argument('--no-browser', action='store_true', default=False,
+                           help=("Start the jupyter server to serve the notebook "
+                                 "but don't open the notebook in the browser.\n"
+                                 "Use this option to connect remotely from localhost to the machine running the kernel"))
     nb_parser.add_argument('--foreground', action='store_true', default=False,
         help="Run jupyter notebook in the foreground.")
 
@@ -241,6 +234,9 @@ file that does not have enough significant digits.""")
         help="Convert structure to the specified format.")
     add_format_arg(p_convert, default="cif")
 
+    p_print = subparsers.add_parser('print', parents=[copts_parser, path_selector],
+                                    help="Print Structure to terminal.")
+
     # Subparser for supercell command.
     p_supercell = subparsers.add_parser('supercell', parents=[copts_parser, path_selector],
         help="Generate supercell.")
@@ -262,6 +258,9 @@ Has to be all integers. Several options are possible:
     p_abisanitize = subparsers.add_parser('abisanitize', parents=[copts_parser, path_selector, spgopt_parser, savefile_parser],
         help="Sanitize structure with abi_sanitize, compare structures and save result to file.")
     add_primitive_options(p_abisanitize)
+
+    p_primitive = subparsers.add_parser('primitive', parents=[copts_parser, path_selector, spgopt_parser, savefile_parser],
+        help="Use spglib to find a smaller unit cell than the input")
 
     # Subparser for irefine
     p_irefine = subparsers.add_parser('irefine', parents=[copts_parser, path_selector, spgopt_parser],
@@ -336,8 +335,18 @@ closest points in this particular structure. This is usually what you want in a 
     # Subparser for notebook.
     p_notebook = subparsers.add_parser('notebook', parents=[copts_parser, path_selector],
         help="Read structure from file and generate jupyter notebook.")
+    p_notebook.add_argument('--classic-notebook', action='store_true', default=False,
+                            help="Use classic notebook instead of jupyterlab.")
+    p_notebook.add_argument('--no-browser', action='store_true', default=False,
+                            help=("Start the jupyter server to serve the notebook "
+                                  "but don't open the notebook in the browser.\n"
+                                  "Use this option to connect remotely from localhost to the machine running the kernel"))
     p_notebook.add_argument('--foreground', action='store_true', default=False,
         help="Run jupyter notebook in the foreground.")
+
+    p_panel = subparsers.add_parser('panel', parents=[copts_parser, path_selector],
+        help="Open GUI in web browser, requires panel package.")
+
     # Subparser for kpath.
     p_kpath = subparsers.add_parser('kpath', parents=[copts_parser, path_selector],
         help="Read structure from file, generate k-path for band-structure calculations.")
@@ -547,6 +556,9 @@ def main():
         if fmt == "cif" and options.filepath.endswith(".cif"): fmt = "abivars"
         print(abilab.Structure.from_file(options.filepath).convert(fmt=fmt))
 
+    elif options.command == "print":
+        print(abilab.Structure.from_file(options.filepath).to_string(verbose=options.verbose))
+
     elif options.command == "supercell":
         structure = abilab.Structure.from_file(options.filepath)
 
@@ -577,7 +589,6 @@ def main():
 
         if not options.verbose:
             print("\nUse -v for more info")
-            #print(sanitized.convert(fmt="cif"))
         else:
             #print("\nDifference between structures:")
             if len(structure) == len(sanitized):
@@ -594,6 +605,18 @@ def main():
 
         # Save file.
         save_structure(sanitized, options)
+
+    elif options.command == "primitive":
+        structure = abilab.Structure.from_file(options.filepath)
+        primitive = structure.get_primitive_structure(tolerance=0.25, use_site_props=False, constrain_latt=None)
+        separator = "\n" + 90 * "="
+        print("\nInitial structure:\n", structure, separator)
+        print("\nPrimitive structure returned by pymatgen:\n", primitive, separator)
+        print("\nAbinit input for primitive structure:\n", primitive.abi_string)
+        if structure != primitive:
+            print("\nInput structure is not primitive (according to pymatgen + spglib)")
+        else:
+            print("\nInput structure seems to be primitive (according to pymatgen + spglib)")
 
     elif options.command == "irefine":
         structure = abilab.Structure.from_file(options.filepath)
@@ -614,7 +637,7 @@ def main():
                 print(sanitized.convert(fmt="cif"))
                 break
 
-            # Increment counter and tols.
+            # Increment counter and tolerances.
             itrial += 1
             symprec += options.symprec_step
             angle_tolerance += options.angle_tolerance_step
@@ -627,7 +650,7 @@ def main():
 
     elif options.command == "conventional":
         print("\nCalling get_conventional_standard_structure to get conventional structure:")
-        print("The standards are defined in Setyawan, W., & Curtarolo, S. (2010). ")
+        print("The standards are defined in Setyawan, W., & Curtarolo, S. (2010).")
         print("High-throughput electronic band structure calculations: Challenges and tools. ")
         print("Computational Materials Science, 49(2), 299-312. doi:10.1016/j.commatsci.2010.05.010\n")
 
@@ -732,7 +755,20 @@ def main():
 
     elif options.command == "notebook":
         structure = abilab.Structure.from_file(options.filepath)
-        structure.make_and_open_notebook(nbpath=None, foreground=options.foreground)
+        structure.make_and_open_notebook(nbpath=None, foreground=options.foreground,
+                                         classic_notebook=options.classic_notebook,
+                                         no_browser=options.no_browser)
+
+    elif options.command == "panel":
+        structure = abilab.Structure.from_file(options.filepath)
+        try:
+            import panel  # flake8: noqa
+        except ImportError as exc:
+            cprint("Use `conda install panel` or `pip install panel` to install the python package.", "red")
+            raise exc
+
+        structure.get_panel().show()  #threaded=True)
+        return 0
 
     elif options.command == "visualize":
         structure = abilab.Structure.from_file(options.filepath)
@@ -850,11 +886,13 @@ def main():
     elif options.command == "mp_match":
         mp = abilab.mp_match_structure(options.filepath)
         if not mp.structures:
-            cprint("No structure found in database", "yellow")
+            cprint("No structure found in MP database", "yellow")
             return 1
 
         if options.notebook:
-            return mp.make_and_open_notebook(foreground=options.foreground)
+            return mp.make_and_open_notebook(foreground=options.foreground,
+                                             classic_notebook=options.classic_notebook,
+                                             no_browser=options.no_browser)
         else:
             mp.print_results(fmt=options.format, verbose=options.verbose)
 
@@ -869,7 +907,9 @@ def main():
         if options.select_spgnum: mp = mp.filter_by_spgnum(options.select_spgnum)
 
         if options.notebook:
-            return mp.make_and_open_notebook(foreground=options.foreground)
+            return mp.make_and_open_notebook(foreground=options.foreground,
+                                             classic_notebook=options.classic_notebook,
+                                             no_browser=options.no_browser)
         else:
             mp.print_results(fmt=options.format, verbose=options.verbose)
 
@@ -925,7 +965,9 @@ def main():
         if options.select_spgnum: cod = cod.filter_by_spgnum(options.select_spgnum)
 
         if options.notebook:
-            return cod.make_and_open_notebook(foreground=options.foreground)
+            return cod.make_and_open_notebook(foreground=options.foreground,
+                                              classic_notebook=options.classic_notebook,
+                                              no_browser=options.no_browser)
         else:
             cod.print_results(fmt=options.format, verbose=options.verbose)
 

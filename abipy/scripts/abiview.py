@@ -141,7 +141,7 @@ def abiview_skw(options):
 
 def abiview_fs(options):
     """
-    Extract eigenvaleus in the IBZ from file and visualize Fermi surface with --appname
+    Extract eigenvalues in the IBZ from file and visualize Fermi surface with --appname
     """
     with abilab.abiopen(options.filepath) as abifile:
         eb3d = abifile.ebands.get_ebands3d()
@@ -181,7 +181,6 @@ asr = {asr}, chneut = {chneut}, dipdip = {dipdip}, lo_to_splitting = {lo_to_spli
         print("Calculation completed.\nResults available in", os.path.dirname(phbst_file.filepath))
 
         phbands = phbst_file.phbands
-        phdos = phdos_file.phdos
 
         if options.xmgrace:
             outpath = options.filepath + ".agr"
@@ -194,6 +193,7 @@ asr = {asr}, chneut = {chneut}, dipdip = {dipdip}, lo_to_splitting = {lo_to_spli
         elif options.phononwebsite:
             return phbands.view_phononwebsite(browser=options.browser, verbose=options.verbose)
         else:
+            phdos = phdos_file.phdos
             units = "mev"
             with MplExpose(slide_mode=options.slide_mode, slide_timeout=options.slide_timeout) as e:
                 #e(phbst_file.expose())
