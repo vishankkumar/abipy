@@ -265,7 +265,7 @@ class Smearing(AttrDict):
                 raise ValueError("Mandatory key %s must be provided" % str(mkey))
 
     def __str__(self):
-        return "smearing scheme: %s, tsmear_eV: %.3f, occopt: %d" % (self.scheme, self.tsmear_ev, self.occopt)
+        return "smearing scheme: %s (occopt %d), tsmear_eV: %.3f" % (self.scheme, self.occopt, self.tsmear_ev)
 
     @property
     def has_metallic_scheme(self):
@@ -384,15 +384,29 @@ class ElectronBands(Has_Structure):
                 with open(obj, "rb") as fh:
                     return cls.as_ebands(pickle.load(fh))
 
-            from abipy.abilab import abiopen
-            with abiopen(obj) as abifile:
-                return abifile.ebands
+            if obj.endswith("_EBANDS.nc"):
+                return cls.from_file(obj)
+
+            from abipy.abilab import abiopen, abifile_subclass_from_filename
+            try:
+                _ = abifile_subclass_from_filename(obj)
+                use_abiopen = True
+            except ValueError:
+                # This is needed to treat the case in which we are trying to read ElectronBands
+                # from a nc file that is not known to AbiPy.
+                use_abiopen = False
+
+            if use_abiopen:
+                with abiopen(obj) as abifile:
+                    return abifile.ebands
+            else:
+                return cls.from_file(obj)
 
         elif hasattr(obj, "ebands"):
             # object with ebands
             return obj.ebands
 
-        raise TypeError("Don't know how to extract ebands from object %s" % type(obj))
+        raise TypeError("Don't know how to extract ebands from object `%s`" % type(obj))
 
     @classmethod
     def from_mpid(cls, material_id, api_key=None, endpoint=None,
@@ -2957,7 +2971,6 @@ class ElectronBandsPlotter(NotebookWriter):
         ax_list, fig, plt = get_axarray_fig_plt(None, nrows=nrows, ncols=ncols,
                                                 sharex=False, sharey=True, squeeze=False)
         ax_list = ax_list.ravel()
-
         # don't show the last ax if numeb is odd.
         if num_plots % ncols != 0: ax_list[-1].axis("off")
 
